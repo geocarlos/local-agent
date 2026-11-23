@@ -4,8 +4,9 @@ from fakes import text_reply, tool_reply
 
 from local_agent import tools
 from local_agent.core import loop
-from local_agent.tools import builtin
-from local_agent.frontends import cli
+from local_agent.core.events import ToolCall, ToolResult, TurnDone
+from local_agent.permissions import Risk
+from local_agent.tools import builtin, tool
 
 
 def start(user_text: str) -> list:
@@ -14,19 +15,36 @@ def start(user_text: str) -> list:
     return messages
 
 
+def make_tool(fn, risk=Risk.READ):
+    """Register `fn` in a private table and return its Tool (keeps TOOLS untouched)."""
+    table: dict = {}
+    tool(risk=risk, registry=table)(fn)
+    return table[fn.__name__]
+
+
+def kinds(events) -> list[str]:
+    return [e.type for e in events]
+
+
 def test_plain_text_reply(fake_ollama, capsys):
     client = fake_ollama([text_reply("hello")])
     messages = start("hi")
+    events: list = []
 
-    assert loop.run_turn(messages, client=client) == "hello"
+    assert loop.run_turn(messages, client=client, emit=events.append) == "hello"
 
     assert len(client.calls) == 1
     assert client.calls[0]["model"] == loop.MODEL
-    assert client.calls[0]["tools"] == list(tools.TOOLS.values())
+    assert client.calls[0]["tools"] == [t.schema() for t in tools.TOOLS.values()]
     assert messages[-1].role == "assistant"
     assert messages[-1].content == "hello"
     assert not messages[-1].tool_calls
-    assert "Agent: hello" in capsys.readouterr().out
+    assert kinds(events) == ["text_delta", "turn_done"]
+    assert events[0].text == "hello"
+    assert events[1].stop_reason == "end_turn"
+    assert events[1].text == "hello"
+    # The core never prints; the frontend renders events.
+    assert capsys.readouterr().out == ""
 
 
 def test_one_tool_call_round(fake_ollama, tmp_path):
@@ -50,22 +68,26 @@ def test_one_tool_call_round(fake_ollama, tmp_path):
 
 def test_tool_error_is_returned_to_model(fake_ollama, monkeypatch):
     def broken_tool(x: int) -> str:
+        """Always fails."""
         raise ValueError("boom")
 
-    monkeypatch.setitem(tools.TOOLS, "broken_tool", broken_tool)
+    monkeypatch.setitem(tools.TOOLS, "broken_tool", make_tool(broken_tool))
     client = fake_ollama([
         tool_reply(("broken_tool", {"x": 1}), ("no_such_tool", {})),
         text_reply("recovered"),
     ])
+    events: list = []
     messages = start("go")
 
-    assert loop.run_turn(messages, client=client) == "recovered"
+    assert loop.run_turn(messages, client=client, emit=events.append) == "recovered"
 
     tool_msgs = [m for m in client.calls[1]["messages"] if m["role"] == "tool"]
     assert tool_msgs[0]["content"] == (
         "Error calling broken_tool with arguments {'x': 1}: ValueError: boom"
     )
     assert tool_msgs[1]["content"] == "Unknown tool: no_such_tool"
+    results = [e for e in events if isinstance(e, ToolResult)]
+    assert [r.status for r in results] == ["failed", "failed"]
 
 
 def test_read_file_error_is_returned_to_model(fake_ollama, tmp_path):
@@ -83,17 +105,22 @@ def test_read_file_error_is_returned_to_model(fake_ollama, tmp_path):
     assert tool_msg["content"].startswith("Error: ")
 
 
-def test_max_tool_rounds_cap(fake_ollama, tmp_path, capsys):
+def test_max_tool_rounds_cap(fake_ollama, tmp_path):
     target = tmp_path / "a.txt"
     target.write_text("a", encoding="utf-8")
     client = fake_ollama([tool_reply(("read_file", {"path": str(target)}))], repeat_last=True)
+    events: list = []
     messages = start("loop forever")
 
-    assert loop.run_turn(messages, client=client) is None
+    assert loop.run_turn(messages, client=client, emit=events.append) is None
 
     assert len(client.calls) == loop.MAX_TOOL_ROUNDS
     assert sum(m["role"] == "tool" for m in messages) == loop.MAX_TOOL_ROUNDS
-    assert f"stopped after {loop.MAX_TOOL_ROUNDS} tool rounds" in capsys.readouterr().out
+    done = events[-1]
+    assert isinstance(done, TurnDone)
+    assert done.stop_reason == "max_turn_requests"
+    assert done.text is None
+    assert done.rounds == loop.MAX_TOOL_ROUNDS
 
 
 def test_max_tool_rounds_cap_respects_patched_value(fake_ollama, monkeypatch):
@@ -104,6 +131,23 @@ def test_max_tool_rounds_cap_respects_patched_value(fake_ollama, monkeypatch):
     assert len(client.calls) == 3
 
 
+def test_tool_call_event_carries_kind_and_arguments(fake_ollama, tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    client = fake_ollama([
+        tool_reply(("read_file", {"path": str(target)})),
+        text_reply("ok"),
+    ])
+    events: list = []
+
+    loop.run_turn(start("read"), client=client, emit=events.append)
+
+    call = next(e for e in events if isinstance(e, ToolCall))
+    assert call.name == "read_file"
+    assert call.kind == "read"
+    assert call.arguments == {"path": str(target)}
+
+
 def test_truncate_boundary():
     limit = builtin.MAX_OUTPUT_CHARS
     exact = "x" * limit
@@ -111,16 +155,3 @@ def test_truncate_boundary():
 
     over = "x" * (limit + 1)
     assert builtin._truncate(over) == "x" * limit + "\n...[truncated 1 chars]"
-
-
-def test_cli_repl_runs_a_turn_and_exits(fake_ollama, monkeypatch, capsys):
-    inputs = iter(["hello", "exit"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
-    client = fake_ollama([text_reply("hi there")])
-
-    cli.run(client=client)
-
-    out = capsys.readouterr().out
-    assert f"Local Agent ready ({loop.MODEL})" in out
-    assert "Agent: hi there" in out
-    assert client.calls[0]["messages"][-1] == {"role": "user", "content": "hello"}

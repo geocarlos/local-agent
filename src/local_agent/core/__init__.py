@@ -1,3 +1,4 @@
-from local_agent.core.loop import MAX_TOOL_ROUNDS, MODEL, new_messages, run_turn
+"""Agent core: the loop (core/loop.py) and the event types (core/events.py).
 
-__all__ = ["MAX_TOOL_ROUNDS", "MODEL", "new_messages", "run_turn"]
+Submodules are imported directly, not re-exported here, to keep imports acyclic.
+"""

@@ -1,14 +1,19 @@
-"""Built-in tools: read_file, write_file, run_command.
+"""Built-in tools: read_file (read), write_file (write), run_command (exec).
 
-Moved unchanged from the old agent.py. The approval prompts still use
-input()/print(); T02 replaces them with the Approver interface.
+Tools never print or read input. The core asks the Approver before write and
+exec tools run, and the frontend renders the preview from the ApprovalRequest.
 """
 
 import subprocess
 from pathlib import Path
 
+from local_agent.core.events import Preview
+from local_agent.permissions import Risk
+from local_agent.tools.registry import tool
+
 MAX_OUTPUT_CHARS = 8000      # Cap tool output so it can't overflow the model's context
 COMMAND_TIMEOUT_S = 60       # Kill shell commands that hang
+MAX_PREVIEW_CHARS = 1500     # How much proposed file content the approval shows
 
 
 def _truncate(text: str) -> str:
@@ -18,6 +23,26 @@ def _truncate(text: str) -> str:
     return text[:MAX_OUTPUT_CHARS] + f"\n...[truncated {len(text) - MAX_OUTPUT_CHARS} chars]"
 
 
+def _write_title(path: str, content: str) -> str:
+    return f"Write {len(content)} chars to '{path}'"
+
+
+def _write_preview(path: str, content: str) -> Preview:
+    text = content
+    if len(content) > MAX_PREVIEW_CHARS:
+        text = content[:MAX_PREVIEW_CHARS] + f"\n...[{len(content) - MAX_PREVIEW_CHARS} more chars]"
+    return Preview(text=text, path=path, kind="text")
+
+
+def _command_title(command: str) -> str:
+    return f"Run command `{command}`"
+
+
+def _command_preview(command: str) -> Preview:
+    return Preview(text=command, kind="command")
+
+
+@tool(risk=Risk.READ)
 def read_file(path: str) -> str:
     """Read the contents of a file."""
     try:
@@ -26,13 +51,14 @@ def read_file(path: str) -> str:
         return f"Error: {e}"
 
 
+@tool(
+    risk=Risk.WRITE,
+    denied_message="User denied file write.",
+    approval_title=_write_title,
+    preview=_write_preview,
+)
 def write_file(path: str, content: str) -> str:
     """Write content to a file (asks for approval first)."""
-    preview = content if len(content) <= 1500 else content[:1500] + f"\n...[{len(content) - 1500} more chars]"
-    print(f"\n[PROPOSED CONTENT for '{path}']\n{preview}\n[END PROPOSED CONTENT]")
-    confirm = input(f"\n[APPROVE] Write {len(content)} chars to '{path}'? (y/n): ").strip().lower()
-    if confirm != "y":
-        return "User denied file write."
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(content, encoding="utf-8")
@@ -41,11 +67,14 @@ def write_file(path: str, content: str) -> str:
     return f"Successfully wrote to {path}."
 
 
+@tool(
+    risk=Risk.EXEC,
+    denied_message="User denied command execution.",
+    approval_title=_command_title,
+    preview=_command_preview,
+)
 def run_command(command: str) -> str:
     """Run a shell command (asks for approval first)."""
-    confirm = input(f"\n[APPROVE] Run command `{command}`? (y/n): ").strip().lower()
-    if confirm != "y":
-        return "User denied command execution."
     try:
         res = subprocess.run(
             command,

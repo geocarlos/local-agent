@@ -1,0 +1,136 @@
+"""Events the core sends to a frontend, and the approval request/decision pair.
+
+The core never prints or reads input. It reports what happens through an
+`EventSink` (a callable that takes one event) and asks an `Approver` before
+risky tool calls (see local_agent.permissions).
+
+Names follow the event table in PLAN.md §1. Fields are aligned with the Agent
+Client Protocol (ACP) so a later stdio server (T11) can map them 1:1:
+
+    TextDelta       -> session/update  agent_message_chunk
+    ToolCall        -> session/update  tool_call         (tool_call_id, kind, raw input)
+    ToolResult      -> session/update  tool_call_update  (status completed/failed)
+    ApprovalRequest -> session/request_permission        (options allow_once/reject_once)
+    TurnDone        -> session/prompt response           (stop_reason)
+    Error           -> JSON-RPC error
+
+See TASKS.md, notes for T02.
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any, ClassVar, Literal
+
+# ACP ToolKind values (full set). A tool's kind is derived from its risk tier (see tools/registry.py).
+ToolKind = Literal[
+    "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"
+]
+
+# ACP StopReason values (full set). The core emits end_turn, max_turn_requests and (T03) cancelled.
+StopReason = Literal["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"]
+
+# ACP ToolCallStatus values for a finished call.
+ToolStatus = Literal["completed", "failed"]
+
+
+@dataclass(frozen=True)
+class TextDelta:
+    """Model text for the frontend. Until streaming (T03) one delta holds the whole reply."""
+
+    text: str
+    type: ClassVar[str] = "text_delta"
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """The model asked for a tool. Sent before approval and execution."""
+
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any]
+    kind: ToolKind = "other"
+    type: ClassVar[str] = "tool_call"
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """A tool call finished. `content` is exactly what goes back to the model."""
+
+    tool_call_id: str
+    name: str
+    content: str
+    status: ToolStatus = "completed"
+    type: ClassVar[str] = "tool_result"
+
+
+@dataclass(frozen=True)
+class Preview:
+    """What the user should see before approving.
+
+    `kind="text"` is proposed file content (with `path`). `kind="command"` is the
+    command line to run. T07 adds `"diff"`. `text` is already truncated for display.
+    """
+
+    text: str
+    path: str | None = None
+    kind: Literal["text", "command", "diff"] = "text"
+
+
+@dataclass(frozen=True)
+class ApprovalRequest:
+    """Ask the user before a write, exec or network tool runs.
+
+    `title` is the question without the `(y/n)` suffix, for example
+    "Write 12 chars to 'a.txt'". The core emits this event to the sink (so a
+    frontend can show the preview) and then passes it to the Approver for a decision.
+    """
+
+    tool_call_id: str
+    tool_name: str
+    risk: str
+    title: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    preview: Preview | None = None
+    type: ClassVar[str] = "approval_request"
+
+
+class Decision(StrEnum):
+    """The answer to an ApprovalRequest. Values are ACP PermissionOption kinds.
+
+    T07 adds ALLOW_ALWAYS ("allow_always") for session-wide approvals.
+    """
+
+    ALLOW_ONCE = "allow_once"
+    REJECT_ONCE = "reject_once"
+
+    @property
+    def allowed(self) -> bool:
+        return self is Decision.ALLOW_ONCE
+
+
+@dataclass(frozen=True)
+class TurnDone:
+    """End of a user turn. `text` is the final reply, or None if there was none."""
+
+    stop_reason: StopReason
+    text: str | None = None
+    rounds: int = 0
+    type: ClassVar[str] = "turn_done"
+
+
+@dataclass(frozen=True)
+class Error:
+    """A failure the frontend should show. Tool failures are ToolResults, not Errors."""
+
+    message: str
+    type: ClassVar[str] = "error"
+
+
+Event = TextDelta | ToolCall | ToolResult | ApprovalRequest | TurnDone | Error
+
+EventSink = Callable[[Event], None]
+
+
+def discard(event: Event) -> None:
+    """An EventSink that drops everything."""

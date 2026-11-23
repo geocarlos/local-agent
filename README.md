@@ -52,17 +52,54 @@ Model notes: `qwen2.5-coder:7b` did not emit structured tool calls in testing. `
 
 ```
 src/local_agent/
-  __init__.py        # main() entry point
-  core/loop.py       # agent loop: one user turn of model/tool rounds
-  tools/__init__.py  # tool table and dispatch (execute_tool)
-  tools/builtin.py   # read_file, write_file, run_command
-  frontends/cli.py   # interactive terminal REPL
+  __init__.py          # main() entry point
+  core/loop.py         # agent loop: one user turn of model/tool rounds; emits events, asks the approver
+  core/events.py       # event types (text, tool_call, tool_result, approval_request, turn_done, error)
+  permissions.py       # risk tiers, approval policy (read auto-allowed), Approver protocol
+  tools/registry.py    # @tool decorator, JSON schema from type hints, Tool objects
+  tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
+  tools/builtin.py     # read_file (read), write_file (write), run_command (exec)
+  frontends/cli.py     # terminal REPL: renders events, answers approvals with y/n
 tests/
-  fakes.py           # FakeOllama: scripted model replies, no real model
-  conftest.py        # fake_ollama fixture
-  test_loop.py       # loop, tool errors, round cap, REPL
+  fakes.py             # FakeOllama: scripted model replies, no real model
+  conftest.py          # fake_ollama fixture
+  test_loop.py         # loop, tool errors, round cap, event payloads
+  test_registry.py     # schema generation, risk tiers, approval requests
+  test_approval.py     # write/exec granted and denied, reads not asking, event order
+  test_cli.py          # y/n approver, rendering, REPL
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
+
+## Architecture
+
+The core (`core/`, `tools/`, `permissions.py`) never prints or reads input. It reports through events and asks an `Approver`. The CLI is one frontend: `render(event)` prints events, and `TerminalApprover` asks `[APPROVE] ...? (y/n)`. A GUI or editor extension would supply its own sink and approver.
+
+Events emitted during a turn, in order: `tool_call`, then for write/exec/network tools `approval_request`, then `tool_result`. A turn ends with `text_delta` (the final reply) and `turn_done`. If no approver is passed, risky tools are refused.
+
+## Adding a tool
+
+A tool is one decorated function. Its docstring becomes the description the model sees, and type hints become the JSON schema:
+
+```python
+# src/local_agent/tools/builtin.py (or any module imported by tools/__init__.py)
+from typing import Annotated
+
+from local_agent.permissions import Risk
+from local_agent.tools.registry import tool
+
+
+@tool(risk=Risk.READ)
+def count_lines(path: Annotated[str, "File to count"]) -> str:
+    """Count the lines in a file."""
+    with open(path, encoding="utf-8") as f:
+        return str(sum(1 for _ in f))
+```
+
+- `risk`: `Risk.READ` runs without asking. `WRITE`, `EXEC` and `NETWORK` ask the approver first.
+- For risky tools, add `approval_title=` (a function returning the question, for example `"Write 12 chars to 'a.txt'"`) and `preview=` (a function returning a `Preview` shown before approval). Both receive the tool's arguments by name. `denied_message=` is what the model receives when the user says no.
+- Supported parameter types: `str`, `int`, `float`, `bool`, `list[T]`, `dict`, and `X | None` for optional parameters. Parameters without a default are required. Use `Annotated[str, "description"]` to describe a parameter.
+- Tools must not `print` or call `input`. Return a string; raised exceptions go back to the model as an error message.
+- Add a test next to `tests/test_registry.py` or `tests/test_approval.py` that checks the schema and, for risky tools, the approval flow.
 
 ## Development
 
