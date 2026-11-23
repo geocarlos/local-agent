@@ -1,16 +1,22 @@
-"""Terminal frontend: the interactive REPL.
+"""Terminal frontend: the interactive REPL and the command-line flags.
 
 Renders core events as text and answers approval requests with y/n.
 The text matches the pre-T02 output: "[Tool Call]", "[PROPOSED CONTENT]",
 "[APPROVE]" and "Agent:" lines. Model text is printed as it streams, after one
-"Agent: " prefix per reply.
+"Agent: " prefix per reply. A "[thinking...]" line marks reasoning, and a
+"[tokens: ...]" line follows each turn that Ollama reported counts for.
 
 Ctrl+C during a turn cancels the turn and returns to the "You:" prompt. Ctrl+C
 at the prompt exits.
 """
 
+import argparse
+from collections.abc import Mapping
+from pathlib import Path
+
 import ollama
 
+from local_agent.config import DEFAULT_HOST, Settings, load_settings
 from local_agent.core import loop
 from local_agent.core.events import (
     ApprovalRequest,
@@ -18,9 +24,15 @@ from local_agent.core.events import (
     Error,
     Event,
     TextDelta,
+    ThinkingDelta,
     ToolCall,
+    ToolResult,
     TurnDone,
+    Usage,
 )
+from local_agent.core.model import OLLAMA_ERRORS, describe_error, probe
+
+CONTEXT_WARNING_FRACTION = 0.9  # warn when the prompt uses this share of num_ctx
 
 
 class TerminalApprover:
@@ -32,12 +44,22 @@ class TerminalApprover:
 
 
 class Renderer:
-    """Prints events. Streamed text stays on one "Agent: " line until another event arrives."""
+    """Prints events. Streamed text stays on one "Agent: " line until another event arrives.
 
-    def __init__(self) -> None:
+    `num_ctx` (optional) lets the token line show the context size and warn when it is nearly full.
+    """
+
+    def __init__(self, num_ctx: int | None = None) -> None:
         self._text_open = False
+        self._thinking_shown = False
+        self._num_ctx = num_ctx
 
     def __call__(self, event: Event) -> None:
+        if isinstance(event, ThinkingDelta):
+            if not self._thinking_shown:
+                print("\n[thinking...]", end="", flush=True)
+                self._thinking_shown = True
+            return
         if isinstance(event, TextDelta):
             if not self._text_open:
                 print("\nAgent: ", end="", flush=True)
@@ -47,6 +69,8 @@ class Renderer:
         self._end_text()
         if isinstance(event, ToolCall):
             print(f"\n[Tool Call] {event.name}({event.arguments})")
+        elif isinstance(event, ToolResult):
+            self._thinking_shown = False  # the next model request starts a new round of reasoning
         elif isinstance(event, ApprovalRequest):
             preview = event.preview
             if preview is not None and preview.kind == "text" and preview.path is not None:
@@ -57,8 +81,17 @@ class Renderer:
                       "Ask again or narrow the request.")
             elif event.stop_reason == "cancelled":
                 print("\n[Turn cancelled]")
+            if event.usage is not None:
+                self._print_usage(event.usage)
         elif isinstance(event, Error):
             print(f"\nError: {event.message}")
+
+    def _print_usage(self, usage: Usage) -> None:
+        of_context = f" of {self._num_ctx}" if self._num_ctx else ""
+        print(f"\n[tokens: {usage.prompt_tokens}{of_context} prompt, {usage.completion_tokens} generated]")
+        if self._num_ctx and usage.prompt_tokens >= CONTEXT_WARNING_FRACTION * self._num_ctx:
+            print(f"Warning: the conversation fills {usage.prompt_tokens} of {self._num_ctx} context tokens. "
+                  "Ollama drops the oldest messages past the context size: start a new chat or raise --num-ctx.")
 
     def _end_text(self) -> None:
         if self._text_open:
@@ -71,12 +104,54 @@ def render(event: Event) -> None:
     Renderer()(event)
 
 
-def run(client: loop.ChatClient = ollama) -> None:
-    """Interactive REPL. Entry point used by local_agent.main()."""
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="local-agent", description="Local coding assistant on Ollama.")
+    parser.add_argument("--model", help="Ollama model name (default: config file, else qwen3-vl:8b)")
+    parser.add_argument("--host", help=f"Ollama server URL (default: OLLAMA_HOST, config file, else {DEFAULT_HOST})")
+    parser.add_argument("--num-ctx", type=int, help="context window in tokens, sent to Ollama with every request")
+    parser.add_argument("--cwd", type=Path, help="workspace folder to start in; tools run there (default: current folder)")
+    parser.add_argument("--config", type=Path, help="config file to read instead of the per-user config.toml")
+    return parser
+
+
+def settings_from_args(args: argparse.Namespace, *, env: Mapping[str, str] | None = None) -> Settings:
+    """Settings for parsed flags: flags over OLLAMA_HOST over the config file over defaults.
+
+    Raises ConfigError for an invalid value or a bad config file.
+    """
+    return load_settings(
+        config_file=args.config,
+        env=env,
+        overrides={
+            "model": args.model,
+            "host": args.host,
+            "num_ctx": args.num_ctx,
+            "workspace": str(args.cwd) if args.cwd is not None else None,
+        },
+    )
+
+
+def _startup_checks(client, settings: Settings) -> None:
+    """Probe the model once. Problems are shown, and the REPL still starts, as with a failed turn."""
+    try:
+        warnings = probe(client, settings)
+    except OLLAMA_ERRORS as e:
+        print(f"\nError: {describe_error(e, settings)}")
+        return
+    for line in warnings:
+        print(f"\n{line}")
+
+
+def run(settings: Settings | None = None, client: loop.ChatClient | None = None) -> None:
+    """Interactive REPL. `settings` defaults to Settings() (no file or environment is read)."""
+    settings = Settings() if settings is None else settings
+    if client is None:
+        client = ollama.Client(host=settings.host)
     messages = loop.new_messages()
     approver = TerminalApprover()
 
-    print(f"Local Agent ready ({loop.MODEL}). Type 'exit' to quit.")
+    print(f"Local Agent ready ({settings.model}). Type 'exit' to quit.")
+    _startup_checks(client, settings)
     while True:
         try:
             user_input = input("\nYou: ").strip()
@@ -85,9 +160,15 @@ def run(client: loop.ChatClient = ollama) -> None:
             break
         if user_input.lower() in {"exit", "quit"}:
             break
+        start = len(messages)
         messages.append({"role": "user", "content": user_input})
         # Ctrl+C during the turn is handled by the core: the turn ends as cancelled and the prompt returns.
-        loop.run_turn(messages, client=client, emit=Renderer(), approver=approver)
+        loop.run_turn(messages, client=client, settings=settings,
+                      emit=Renderer(settings.num_ctx), approver=approver)
+        if len(messages) == start + 1:
+            # No reply was recorded (an Ollama error, or Ctrl+C before one): drop the message
+            # so that sending it again does not put it into the history twice.
+            del messages[start]
 
 
 if __name__ == "__main__":

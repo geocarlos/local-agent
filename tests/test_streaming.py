@@ -12,6 +12,7 @@ import pytest
 from fakes import FakeOllama, Raise, Run, Stream, chunk, chunked, text_reply, tool_reply
 
 from local_agent import tools
+from local_agent.config import DEFAULT_MODEL, Settings
 from local_agent.core import loop
 from local_agent.core.events import Error, TextDelta, ToolCall, ToolResult, TurnDone
 from local_agent.permissions import Risk
@@ -290,14 +291,14 @@ def test_ctrl_c_during_stream_cancels(fake_ollama):
 # --- Ollama errors ---------------------------------------------------------
 
 @pytest.mark.parametrize("client", [DownClient(), "stream"], ids=["call-time", "stream-time"])
-def test_ollama_down_emits_error_naming_the_host(client, monkeypatch):
-    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:1")
+def test_ollama_down_emits_error_naming_the_host(client):
+    settings = Settings(host="http://127.0.0.1:1")
     if client == "stream":
         client = FakeOllama([Stream([Raise(httpx.ConnectError("refused"))])])
     events: list = []
     messages = start("hi")
 
-    assert loop.run_turn(messages, client=client, emit=events.append) is None
+    assert loop.run_turn(messages, client=client, settings=settings, emit=events.append) is None
 
     errors = [e for e in events if isinstance(e, Error)]
     assert len(errors) == 1
@@ -311,7 +312,8 @@ def test_ollama_down_with_the_real_client_names_the_port():
     client = ollama.Client(host="http://127.0.0.1:1")
     events: list = []
 
-    assert loop.run_turn(start("hi"), client=client, emit=events.append) is None
+    assert loop.run_turn(start("hi"), client=client, settings=Settings(host="http://127.0.0.1:1"),
+                         emit=events.append) is None
 
     message = events[-1].message
     assert isinstance(events[-1], Error)
@@ -340,7 +342,7 @@ def test_model_not_found_suggests_ollama_pull(fake_ollama, error):
 
     errors = [e for e in events if isinstance(e, Error)]
     assert len(errors) == 1
-    assert f"ollama pull {loop.MODEL}" in errors[0].message
+    assert f"ollama pull {DEFAULT_MODEL}" in errors[0].message
     assert not any(isinstance(e, TurnDone) for e in events)
 
 

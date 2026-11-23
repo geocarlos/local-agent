@@ -10,6 +10,9 @@ dict, and `X | None` (optional). A parameter's description comes from
 `Annotated[str, "description"]`; without one the schema carries an empty
 description, which is what ollama's own function conversion produces.
 
+A tool that needs per-turn limits declares a parameter named `context` typed
+as ToolContext. The core fills it in; it is not part of the schema the model sees.
+
 A tool function must not print or read input. Approval is handled by the
 core (see core/loop.py) through permissions.Approver.
 """
@@ -21,8 +24,19 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Annotated, Union, get_args, get_origin, get_type_hints
 
+from local_agent.config import DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_MAX_OUTPUT_CHARS
 from local_agent.core.events import ApprovalRequest, Preview, ToolKind
 from local_agent.permissions import Risk
+
+CONTEXT_PARAM = "context"
+
+
+@dataclass(frozen=True)
+class ToolContext:
+    """Limits the core passes to a tool call, taken from the settings for the turn."""
+
+    command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S
+    max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS
 
 
 class Location(StrEnum):
@@ -78,8 +92,14 @@ def _type_schema(hint: Any) -> dict:
     raise TypeError(f"unsupported parameter type for tool schema: {hint!r}")
 
 
+def _takes_context(fn: Callable[..., Any]) -> bool:
+    """True if the function has a `context: ToolContext` parameter."""
+    hints = get_type_hints(fn)
+    return hints.get(CONTEXT_PARAM) is ToolContext
+
+
 def _parameters_schema(fn: Callable[..., Any]) -> dict:
-    """The `parameters` object of a function's JSON schema."""
+    """The `parameters` object of a function's JSON schema (the context parameter is left out)."""
     hints = get_type_hints(fn, include_extras=True)
     properties: dict[str, dict] = {}
     required: list[str] = []
@@ -88,6 +108,8 @@ def _parameters_schema(fn: Callable[..., Any]) -> dict:
             raise TypeError(f"{fn.__name__}: *args and **kwargs are not supported in tools")
         if name not in hints:
             raise TypeError(f"{fn.__name__}: parameter {name!r} needs a type hint")
+        if name == CONTEXT_PARAM and hints[name] is ToolContext:
+            continue
         hint, description = _strip_annotated(hints[name])
         properties[name] = {**_type_schema(hint), "description": description}
         if param.default is inspect.Parameter.empty:
@@ -108,6 +130,7 @@ class Tool:
     denied_message: str
     approval_title: Callable[..., str] | None
     preview: Callable[..., Preview | None] | None
+    takes_context: bool = False
 
     @property
     def kind(self) -> ToolKind:
@@ -125,19 +148,28 @@ class Tool:
             },
         }
 
-    def bind(self, arguments: Mapping[str, Any]) -> None:
+    def _full_arguments(self, arguments: Mapping[str, Any], context: ToolContext | None) -> dict[str, Any]:
+        """The keyword arguments for `fn`: the model's arguments plus the context, if the tool takes one."""
+        args = dict(arguments)
+        if self.takes_context:
+            if CONTEXT_PARAM in args:
+                raise TypeError(f"{self.name}() got an unexpected argument {CONTEXT_PARAM!r}")
+            args[CONTEXT_PARAM] = context or ToolContext()
+        return args
+
+    def bind(self, arguments: Mapping[str, Any], context: ToolContext | None = None) -> None:
         """Check the arguments against the function signature without calling it.
 
         Raises TypeError naming this tool, for example "write_file() missing a required argument: 'content'".
         """
         try:
-            inspect.signature(self.fn).bind(**arguments)
+            inspect.signature(self.fn).bind(**self._full_arguments(arguments, context))
         except TypeError as e:
             raise TypeError(f"{self.name}() {e}") from None
 
-    def call(self, arguments: Mapping[str, Any]) -> str:
+    def call(self, arguments: Mapping[str, Any], context: ToolContext | None = None) -> str:
         """Run the tool. Raises on bad arguments or failures; the core turns that into a result."""
-        return str(self.fn(**arguments))
+        return str(self.fn(**self._full_arguments(arguments, context)))
 
     def approval_request(self, tool_call_id: str, arguments: Mapping[str, Any]) -> ApprovalRequest:
         """What the user is asked before this call runs."""
@@ -192,6 +224,7 @@ def tool(
             denied_message=denied_message or f"User denied {name}.",
             approval_title=approval_title,
             preview=preview,
+            takes_context=_takes_context(fn),
         )
         return fn
 

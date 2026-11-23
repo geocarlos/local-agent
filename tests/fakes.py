@@ -16,11 +16,14 @@ from dataclasses import dataclass
 import ollama
 
 
-def text_reply(content: str) -> ollama.ChatResponse:
-    """A scripted model reply with plain text and no tool calls."""
+def text_reply(content: str, *, prompt_eval_count: int | None = None, eval_count: int | None = None,
+               thinking: str | None = None) -> ollama.ChatResponse:
+    """A scripted model reply with plain text and no tool calls. Token counts go on the final chunk."""
     return ollama.ChatResponse(
         model="fake",
-        message=ollama.Message(role="assistant", content=content),
+        message=ollama.Message(role="assistant", content=content, thinking=thinking),
+        prompt_eval_count=prompt_eval_count,
+        eval_count=eval_count,
     )
 
 
@@ -58,25 +61,34 @@ class Stream(list):
 
 
 def chunked(response: ollama.ChatResponse, chars: int | None = None) -> Stream:
-    """Split a reply into stream chunks: text in `chars`-sized pieces, one chunk per tool call, then a done chunk."""
+    """Split a reply into stream chunks: text in `chars`-sized pieces, one chunk per tool call, then a done chunk.
+
+    The done chunk carries the reply's token counts, as Ollama's final chunk does.
+    """
     message = response.message
     steps = Stream()
     text = message.content or ""
+    if message.thinking:
+        steps.append(chunk(thinking=message.thinking))
     if text:
         size = chars or len(text)
         for start in range(0, len(text), size):
             steps.append(chunk(content=text[start:start + size]))
     for call in message.tool_calls or []:
         steps.append(chunk(tool_calls=[call]))
-    steps.append(chunk(content="", done=True))
+    steps.append(chunk(content="", done=True, prompt_eval_count=response.prompt_eval_count,
+                       eval_count=response.eval_count))
     return steps
 
 
-def chunk(*, content: str = "", tool_calls=None, done: bool = False) -> ollama.ChatResponse:
+def chunk(*, content: str = "", tool_calls=None, thinking: str | None = None, done: bool = False,
+          prompt_eval_count: int | None = None, eval_count: int | None = None) -> ollama.ChatResponse:
     return ollama.ChatResponse(
         model="fake",
-        message=ollama.Message(role="assistant", content=content, tool_calls=tool_calls),
+        message=ollama.Message(role="assistant", content=content, tool_calls=tool_calls, thinking=thinking),
         done=done,
+        prompt_eval_count=prompt_eval_count,
+        eval_count=eval_count,
     )
 
 
@@ -86,6 +98,7 @@ class FakeOllama:
     If `repeat_last` is set, the last response is returned forever once the
     script runs out; otherwise running out fails the test. `chunk_chars` sets
     the size of text chunks when a reply is streamed (None: text in one chunk).
+    `capabilities` is what show() reports; `show_error` is raised by show() instead.
     """
 
     def __init__(
@@ -93,15 +106,28 @@ class FakeOllama:
         responses: list[ollama.ChatResponse | Stream],
         repeat_last: bool = False,
         chunk_chars: int | None = None,
+        capabilities: tuple[str, ...] | None = ("completion", "tools"),
+        show_error: BaseException | None = None,
     ):
         self.responses = list(responses)
         self.repeat_last = repeat_last
         self.chunk_chars = chunk_chars
+        self.capabilities = capabilities
+        self.show_error = show_error
         self.calls: list[dict] = []
+        self.show_calls: list[str] = []
 
-    def chat(self, *, model, messages, tools, stream=False):
+    def show(self, model):
+        self.show_calls.append(model)
+        if self.show_error is not None:
+            raise self.show_error
+        capabilities = None if self.capabilities is None else list(self.capabilities)
+        return ollama.ShowResponse(model="fake", model_info={}, capabilities=capabilities)
+
+    def chat(self, *, model, messages, tools, stream=False, options=None):
         # Snapshot the history: the loop keeps appending to the same list.
-        self.calls.append({"model": model, "messages": list(messages), "tools": tools, "stream": stream})
+        self.calls.append({"model": model, "messages": list(messages), "tools": tools, "stream": stream,
+                           "options": options})
         if len(self.calls) <= len(self.responses):
             item = self.responses[len(self.calls) - 1]
         elif self.repeat_last and self.responses:

@@ -1,11 +1,21 @@
 """Terminal frontend: y/n approver and event rendering. `input` is monkeypatched."""
 
+import httpx
 import ollama
 import pytest
-from fakes import text_reply, tool_reply
+from fakes import FakeOllama, Raise, Stream, text_reply, tool_reply
 
-from local_agent.core import loop
-from local_agent.core.events import ApprovalRequest, Decision, Preview, TextDelta, ToolCall, TurnDone
+from local_agent.config import DEFAULT_MODEL, Settings
+from local_agent.core.events import (
+    ApprovalRequest,
+    Decision,
+    Preview,
+    TextDelta,
+    ThinkingDelta,
+    ToolCall,
+    TurnDone,
+    Usage,
+)
 from local_agent.frontends import cli
 
 
@@ -76,7 +86,7 @@ def test_repl_write_with_y_then_exit(fake_ollama, monkeypatch, tmp_path, capsys)
     cli.run(client=client)
 
     out = capsys.readouterr().out
-    assert f"Local Agent ready ({loop.MODEL})" in out
+    assert f"Local Agent ready ({DEFAULT_MODEL})" in out
     assert "[Tool Call] write_file(" in out
     assert f"[PROPOSED CONTENT for '{target}']\nhi\n[END PROPOSED CONTENT]" in out
     assert "Agent: saved it" in out
@@ -109,7 +119,7 @@ def test_cli_repl_runs_a_turn_and_exits(fake_ollama, monkeypatch, capsys):
     cli.run(client=client)
 
     out = capsys.readouterr().out
-    assert f"Local Agent ready ({loop.MODEL})" in out
+    assert f"Local Agent ready ({DEFAULT_MODEL})" in out
     assert "Agent: hi there" in out
     assert client.calls[0]["messages"][-1] == {"role": "user", "content": "hello"}
 
@@ -174,17 +184,97 @@ def test_ctrl_c_at_the_prompt_exits_cleanly(fake_ollama, monkeypatch, capsys):
 
     cli.run(client=fake_ollama([]))  # no KeyboardInterrupt escapes
 
-    assert f"Local Agent ready ({loop.MODEL})" in capsys.readouterr().out
+    assert f"Local Agent ready ({DEFAULT_MODEL})" in capsys.readouterr().out
 
 
 def test_ollama_down_shows_an_error_and_stays_at_the_prompt(monkeypatch, capsys):
     inputs = iter(["hello", "exit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
-    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:1")
-
-    cli.run(client=ollama.Client(host="http://127.0.0.1:1"))
+    cli.run(settings=Settings(host="http://127.0.0.1:1"), client=ollama.Client(host="http://127.0.0.1:1"))
 
     out = capsys.readouterr().out
     assert "Error: Cannot reach Ollama at http://127.0.0.1:1" in out
     assert "ollama serve" in out
     assert list(inputs) == []  # the second input was read: the REPL kept going
+
+
+def test_token_line_shows_prompt_against_the_context_size(capsys):
+    cli.render(TurnDone(stop_reason="end_turn", text="x", rounds=1, usage=Usage(1000, 50)))
+    assert "[tokens: 1000 prompt, 50 generated]" in capsys.readouterr().out
+
+    renderer = cli.Renderer(num_ctx=8192)
+    renderer(TurnDone(stop_reason="end_turn", text="x", rounds=1, usage=Usage(1000, 50)))
+    out = capsys.readouterr().out
+    assert "[tokens: 1000 of 8192 prompt, 50 generated]" in out
+    assert "Warning" not in out
+
+
+def test_context_warning_when_the_prompt_nearly_fills_num_ctx(capsys):
+    cli.Renderer(num_ctx=8192)(TurnDone(stop_reason="end_turn", text="x", rounds=1, usage=Usage(7500, 10)))
+
+    out = capsys.readouterr().out
+    assert "[tokens: 7500 of 8192 prompt" in out
+    assert "the conversation fills 7500 of 8192 context tokens" in out
+    assert "--num-ctx" in out
+
+
+def test_no_token_line_when_ollama_gave_no_counts(capsys):
+    cli.render(TurnDone(stop_reason="end_turn", text="x", rounds=1, usage=None))
+
+    assert capsys.readouterr().out == ""
+
+
+def test_thinking_shows_one_indicator_before_the_answer(capsys):
+    render = cli.Renderer()
+    render(ThinkingDelta(text="hmm"))
+    render(ThinkingDelta(text="more"))
+    render(TextDelta(text="hi"))
+    render(TurnDone(stop_reason="end_turn", text="hi", rounds=1))
+
+    assert capsys.readouterr().out == "\n[thinking...]\nAgent: hi\n"
+
+
+def test_repl_sends_the_configured_num_ctx_and_model(fake_ollama, monkeypatch):
+    inputs = iter(["hello", "exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    client = fake_ollama([text_reply("hi")])
+
+    cli.run(settings=Settings(model="other:1b", num_ctx=4096), client=client)
+
+    assert client.calls[0]["model"] == "other:1b"
+    assert client.calls[0]["options"] == {"num_ctx": 4096}
+
+
+def test_repl_shows_the_thinking_indicator_and_token_line(fake_ollama, monkeypatch, capsys):
+    inputs = iter(["hello", "exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    client = fake_ollama([text_reply("hi there", thinking="pondering", prompt_eval_count=120, eval_count=7)])
+
+    cli.run(settings=Settings(num_ctx=8192), client=client)
+
+    out = capsys.readouterr().out
+    assert "[thinking...]\nAgent: hi there" in out
+    assert "[tokens: 120 of 8192 prompt, 7 generated]" in out
+
+
+def test_a_failed_turn_is_not_repeated_in_the_history_on_retry(monkeypatch, capsys):
+    inputs = iter(["first try", "second try", "exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    client = FakeOllama([Stream([Raise(httpx.ConnectError("refused"))]), text_reply("ok")])
+
+    cli.run(settings=Settings(host="http://127.0.0.1:1"), client=client)
+
+    assert "Error: Cannot reach Ollama" in capsys.readouterr().out
+    user_texts = [m["content"] for m in client.calls[1]["messages"] if m["role"] == "user"]
+    assert user_texts == ["second try"]
+
+
+def test_a_turn_with_a_reply_keeps_its_user_message(fake_ollama, monkeypatch):
+    inputs = iter(["one", "two", "exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+    client = fake_ollama([text_reply("first"), text_reply("second")])
+
+    cli.run(client=client)
+
+    user_texts = [m["content"] for m in client.calls[1]["messages"] if m["role"] == "user"]
+    assert user_texts == ["one", "two"]

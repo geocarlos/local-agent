@@ -2,6 +2,7 @@
 
 Tools never print or read input. The core asks the Approver before write and
 exec tools run, and the frontend renders the preview from the ApprovalRequest.
+Output limits and the command timeout come from the ToolContext the core passes in.
 """
 
 import subprocess
@@ -9,18 +10,16 @@ from pathlib import Path
 
 from local_agent.core.events import Preview
 from local_agent.permissions import Risk
-from local_agent.tools.registry import tool
+from local_agent.tools.registry import ToolContext, tool
 
-MAX_OUTPUT_CHARS = 8000      # Cap tool output so it can't overflow the model's context
-COMMAND_TIMEOUT_S = 60       # Kill shell commands that hang
 MAX_PREVIEW_CHARS = 1500     # How much proposed file content the approval shows
 
 
-def _truncate(text: str) -> str:
-    """Trim long tool output and say so, so the model knows it was cut."""
-    if len(text) <= MAX_OUTPUT_CHARS:
+def _truncate(text: str, limit: int) -> str:
+    """Trim long tool output to `limit` characters and say so, so the model knows it was cut."""
+    if len(text) <= limit:
         return text
-    return text[:MAX_OUTPUT_CHARS] + f"\n...[truncated {len(text) - MAX_OUTPUT_CHARS} chars]"
+    return text[:limit] + f"\n...[truncated {len(text) - limit} chars]"
 
 
 def _write_title(path: str, content: str) -> str:
@@ -43,10 +42,10 @@ def _command_preview(command: str) -> Preview:
 
 
 @tool(risk=Risk.READ)
-def read_file(path: str) -> str:
+def read_file(path: str, context: ToolContext) -> str:
     """Read the contents of a file."""
     try:
-        return _truncate(Path(path).read_text(encoding="utf-8"))
+        return _truncate(Path(path).read_text(encoding="utf-8"), context.max_output_chars)
     except Exception as e:
         return f"Error: {e}"
 
@@ -73,7 +72,7 @@ def write_file(path: str, content: str) -> str:
     approval_title=_command_title,
     preview=_command_preview,
 )
-def run_command(command: str) -> str:
+def run_command(command: str, context: ToolContext) -> str:
     """Run a shell command (asks for approval first)."""
     try:
         res = subprocess.run(
@@ -83,10 +82,11 @@ def run_command(command: str) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=COMMAND_TIMEOUT_S,
+            timeout=context.command_timeout_s,
         )
     except subprocess.TimeoutExpired:
-        return f"Error: command timed out after {COMMAND_TIMEOUT_S}s and was killed."
+        return f"Error: command timed out after {context.command_timeout_s}s and was killed."
     except Exception as e:
         return f"Error running command: {e}"
-    return _truncate(f"EXIT CODE: {res.returncode}\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+    return _truncate(f"EXIT CODE: {res.returncode}\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}",
+                     context.max_output_chars)

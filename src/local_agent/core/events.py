@@ -43,6 +43,14 @@ class TextDelta:
 
 
 @dataclass(frozen=True)
+class ThinkingDelta:
+    """A piece of the model's reasoning, sent as it streams. Shown as an indicator only; it is kept in history."""
+
+    text: str
+    type: ClassVar[str] = "thinking_delta"
+
+
+@dataclass(frozen=True)
 class ToolCall:
     """The model asked for a tool. Sent before approval and execution."""
 
@@ -110,16 +118,31 @@ class Decision(StrEnum):
 
 
 @dataclass(frozen=True)
+class Usage:
+    """Token counts reported by Ollama for a turn, or None when Ollama gave none.
+
+    `prompt_tokens` is the prompt size of the last model request, which is how
+    much of the context window the conversation fills. `completion_tokens` is
+    the number of tokens generated over all rounds of the turn.
+    """
+
+    prompt_tokens: int
+    completion_tokens: int
+
+
+@dataclass(frozen=True)
 class TurnDone:
     """End of a user turn. `text` is the final reply, or None if there was none.
 
     `stop_reason="cancelled"` means the turn was cancelled (Ctrl+C or a cancel
     event). Tool calls that had not run are answered with a failed ToolResult.
+    `usage` is set when the turn made at least one model request that reported counts.
     """
 
     stop_reason: StopReason
     text: str | None = None
     rounds: int = 0
+    usage: Usage | None = None
     type: ClassVar[str] = "turn_done"
 
 
@@ -134,7 +157,7 @@ class Error:
     type: ClassVar[str] = "error"
 
 
-Event = TextDelta | ToolCall | ToolResult | ApprovalRequest | TurnDone | Error
+Event = TextDelta | ThinkingDelta | ToolCall | ToolResult | ApprovalRequest | TurnDone | Error
 
 EventSink = Callable[[Event], None]
 

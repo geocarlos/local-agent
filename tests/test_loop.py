@@ -3,8 +3,22 @@
 from fakes import text_reply, tool_reply
 
 from local_agent import tools
+from local_agent.config import (
+    DEFAULT_MAX_OUTPUT_CHARS,
+    DEFAULT_MAX_TOOL_ROUNDS,
+    DEFAULT_MODEL,
+    DEFAULT_NUM_CTX,
+    Settings,
+)
 from local_agent.core import loop
-from local_agent.core.events import ToolCall, ToolResult, TurnDone
+from local_agent.core.events import (
+    TextDelta,
+    ThinkingDelta,
+    ToolCall,
+    ToolResult,
+    TurnDone,
+    Usage,
+)
 from local_agent.permissions import Risk
 from local_agent.tools import builtin, tool
 
@@ -34,7 +48,7 @@ def test_plain_text_reply(fake_ollama, capsys):
     assert loop.run_turn(messages, client=client, emit=events.append) == "hello"
 
     assert len(client.calls) == 1
-    assert client.calls[0]["model"] == loop.MODEL
+    assert client.calls[0]["model"] == DEFAULT_MODEL
     assert client.calls[0]["tools"] == [t.schema() for t in tools.TOOLS.values()]
     assert messages[-1].role == "assistant"
     assert messages[-1].content == "hello"
@@ -114,20 +128,19 @@ def test_max_tool_rounds_cap(fake_ollama, tmp_path):
 
     assert loop.run_turn(messages, client=client, emit=events.append) is None
 
-    assert len(client.calls) == loop.MAX_TOOL_ROUNDS
-    assert sum(m["role"] == "tool" for m in messages) == loop.MAX_TOOL_ROUNDS
+    assert len(client.calls) == DEFAULT_MAX_TOOL_ROUNDS
+    assert sum(m["role"] == "tool" for m in messages) == DEFAULT_MAX_TOOL_ROUNDS
     done = events[-1]
     assert isinstance(done, TurnDone)
     assert done.stop_reason == "max_turn_requests"
     assert done.text is None
-    assert done.rounds == loop.MAX_TOOL_ROUNDS
+    assert done.rounds == DEFAULT_MAX_TOOL_ROUNDS
 
 
-def test_max_tool_rounds_cap_respects_patched_value(fake_ollama, monkeypatch):
-    monkeypatch.setattr(loop, "MAX_TOOL_ROUNDS", 3)
+def test_max_tool_rounds_cap_comes_from_settings(fake_ollama):
     client = fake_ollama([tool_reply(("no_such_tool", {}))], repeat_last=True)
 
-    assert loop.run_turn(start("x"), client=client) is None
+    assert loop.run_turn(start("x"), client=client, settings=Settings(max_tool_rounds=3)) is None
     assert len(client.calls) == 3
 
 
@@ -149,9 +162,103 @@ def test_tool_call_event_carries_kind_and_arguments(fake_ollama, tmp_path):
 
 
 def test_truncate_boundary():
-    limit = builtin.MAX_OUTPUT_CHARS
+    limit = DEFAULT_MAX_OUTPUT_CHARS
     exact = "x" * limit
-    assert builtin._truncate(exact) == exact
+    assert builtin._truncate(exact, limit) == exact
 
     over = "x" * (limit + 1)
-    assert builtin._truncate(over) == "x" * limit + "\n...[truncated 1 chars]"
+    assert builtin._truncate(over, limit) == "x" * limit + "\n...[truncated 1 chars]"
+
+
+# --- settings, num_ctx, token usage, thinking ------------------------------------
+
+def test_num_ctx_is_sent_with_every_chat_call(fake_ollama, tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    client = fake_ollama([tool_reply(("read_file", {"path": str(target)})), text_reply("ok")])
+
+    loop.run_turn(start("read"), client=client, settings=Settings(num_ctx=4321))
+
+    assert [call["options"] for call in client.calls] == [{"num_ctx": 4321}, {"num_ctx": 4321}]
+
+
+def test_default_num_ctx_is_sent_when_no_settings_are_given(fake_ollama):
+    client = fake_ollama([text_reply("hi")])
+
+    loop.run_turn(start("hi"), client=client)
+
+    assert client.calls[0]["options"] == {"num_ctx": DEFAULT_NUM_CTX}
+
+
+def test_model_and_host_come_from_settings(fake_ollama):
+    client = fake_ollama([text_reply("hi")])
+
+    loop.run_turn(start("hi"), client=client, settings=Settings(model="other:1b"))
+
+    assert client.calls[0]["model"] == "other:1b"
+
+
+def test_token_counts_come_from_the_final_chunk_and_are_summed(fake_ollama, tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    first = tool_reply(("read_file", {"path": str(target)}))
+    first.prompt_eval_count, first.eval_count = 100, 20
+    second = text_reply("ok", prompt_eval_count=150, eval_count=30)
+    client = fake_ollama([first, second])
+    events: list = []
+
+    loop.run_turn(start("read"), client=client, emit=events.append)
+
+    done = events[-1]
+    # prompt_tokens is the last request's prompt size (the context in use); completion tokens add up over rounds.
+    assert done.usage == Usage(prompt_tokens=150, completion_tokens=50)
+
+
+def test_usage_is_none_when_ollama_reports_no_counts(fake_ollama):
+    client = fake_ollama([text_reply("hi")])
+    events: list = []
+
+    loop.run_turn(start("hi"), client=client, emit=events.append)
+
+    assert events[-1].usage is None
+
+
+def test_usage_is_reported_when_the_round_cap_is_hit(fake_ollama, tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    looping = tool_reply(("read_file", {"path": str(target)}))
+    looping.prompt_eval_count, looping.eval_count = 40, 5
+    client = fake_ollama([looping], repeat_last=True)
+    events: list = []
+
+    loop.run_turn(start("loop"), client=client, emit=events.append, settings=Settings(max_tool_rounds=2))
+
+    assert events[-1].stop_reason == "max_turn_requests"
+    assert events[-1].usage == Usage(prompt_tokens=40, completion_tokens=10)
+
+
+def test_thinking_is_emitted_as_an_event_and_kept_in_history(fake_ollama):
+    client = fake_ollama([text_reply("the answer", thinking="let me reason")])
+    events: list = []
+    messages = start("hi")
+
+    loop.run_turn(messages, client=client, emit=events.append)
+
+    thinking = [e for e in events if isinstance(e, ThinkingDelta)]
+    assert [e.text for e in thinking] == ["let me reason"]
+    assert kinds(events)[0] == "thinking_delta"  # reasoning comes before the answer
+    assert messages[-1].thinking == "let me reason"
+    assert messages[-1].content == "the answer"
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "the answer"
+
+
+def test_settings_tool_limits_reach_the_tools(fake_ollama, tmp_path):
+    target = tmp_path / "long.txt"
+    target.write_text("x" * 50, encoding="utf-8")
+    client = fake_ollama([tool_reply(("read_file", {"path": str(target)})), text_reply("ok")])
+    messages = start("read")
+
+    loop.run_turn(messages, client=client, settings=Settings(max_output_chars=10))
+
+    tool_msg = next(m for m in messages if m["role"] == "tool")
+    assert tool_msg["content"] == "x" * 10 + "\n...[truncated 40 chars]"
