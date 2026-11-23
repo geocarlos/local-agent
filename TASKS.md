@@ -28,7 +28,7 @@ Status: `todo` · `in progress` · `in review` · `done`
 - CLI frontend in `frontends/cli.py` renders events and answers approvals with `y/n`.
 - **Done when:** CLI behaves as today on the new interfaces; tests cover schema generation, approval denied/granted, and event order.
 
-### T03 Streaming, cancel and error handling: `todo`
+### T03 Streaming, cancel and error handling: `done`
 - `stream=True` with `text_delta` events.
 - Cancel support; Ctrl+C mid-turn must not leave an assistant tool call without a tool result in history.
 - Clear message when Ollama is unreachable; include `tool_name` in tool messages.
@@ -165,4 +165,18 @@ Findings from **verify** items and follow-ups go here, by task id.
 - Follow-up (before T06): Google-style `Args:` docstring blocks are not parsed into per-parameter descriptions. Only `Annotated[..., "desc"]` sets them. Revisit when the read tools with many parameters are added.
 - Follow-up (T20): `Tool.fn` is mandatory, so client-located tools need a stub body. Consider making `fn` optional for `location=CLIENT`.
 - Follow-up (hardening): argument types are not validated against the schema (only the signature is bound). A model that sends `"5"` for an `int` reaches the tool unchanged. Add type coercion or validation.
+
+**T03**
+- **Streaming:** `run_turn` calls the client with `stream=True` and emits `text_delta` per chunk. Content and `tool_calls` are collected across all chunks (`core/loop.py` `_stream_reply`) and appended to history as an `ollama.Message` only when the stream has finished. The CLI prints one `Agent: ` line and appends the deltas to it (`Renderer` in `frontends/cli.py`).
+- **Behaviour change:** text that comes before tool calls in a round is now streamed and shown (it used to be dropped). The core cannot know a reply has tool calls until the stream ends, so it streams everything. The T02 note about final-reply-only text no longer holds.
+- **Cancel:** `run_turn(..., cancel=threading.Event)` is checked between chunks, before each round and before each tool call. Ctrl+C arrives as `KeyboardInterrupt`; the core catches it at the streaming, tool and approval steps (and once more around the whole turn) and treats it as a cancel. The turn ends with `turn_done` (`stop_reason="cancelled"`). The CLI shows `[Turn cancelled]` and returns to `You:`. Ctrl+C at the prompt exits.
+- **History invariant (chosen: synthetic results + drop partial reply):** every tool call in an assistant message gets a tool message. Calls that did not run get `"Cancelled by user."` as a failed `tool_result`, and the event stream shows a `tool_call` and a `tool_result` for each. A reply cut off mid-stream is not appended, so its partial tool calls never reach history. `tests/test_streaming.py` asserts the invariant with `assert_tool_calls_answered` after every cancel and error case.
+- **Errors:** an `error` event is emitted and the turn ends with no `turn_done` (matches ACP, where a failed prompt is a JSON-RPC error). Mapping: `ConnectionError` and `httpx.ConnectError` give "Cannot reach Ollama at <host>. Start it with `ollama serve` ..."; `ResponseError` 404, or "not found" in its text, gives "Model '<model>' is not installed ... `ollama pull <model>`"; other `ResponseError`s and `httpx.TransportError`s are shown with their text. Other exceptions still propagate (they are bugs).
+- **Verified against the client (ollama 0.6.x, httpx 0.28):** with `stream=True` the client returns a generator. A refused connection surfaces when the stream is first read, as a raw `httpx.ConnectError`, not as `ConnectionError` (that is only raised on the non-streaming path). A missing model is `ResponseError` 404 before the stream starts. `Message` has `tool_name`, which is now set on every tool message.
+- **Verified live (qwen3-vl:8b):** a piped turn streams and reads `.python-version` (`3.14`). With `OLLAMA_HOST=http://127.0.0.1:1` the CLI prints the Ollama-down error, stays at the prompt, and exits 0. Model not found (`no-such-model:0b`) gives the `ollama pull` message. A cancel from another thread after 8 s on a real stream returns `cancelled` with history `[system, user]`.
+- **Not verified:** a real Ctrl+C in a console. Tests inject `KeyboardInterrupt` at each step instead. UNVERIFIED, needs a manual check: a real Ctrl+C on Windows during a silent stream (model load or prompt eval, when no chunk arrives) may not interrupt until the next chunk. Fix options: an httpx read timeout via `ollama.Client(timeout=...)`, or a worker thread (T11/T16).
+- **Follow-up (before T11/T16):** on Windows, a blocking socket read may not be interrupted by Ctrl+C until the next chunk arrives, and the ollama client has no read timeout by default. If real Ctrl+C feels slow, run the turn on a worker thread or add a read timeout. Check it by hand first.
+- **Deferred to T04/T16:** `thinking` passthrough or a "thinking..." indicator. qwen3-vl thinks before answering and the `thinking` field is ignored, so the user sees nothing for a while.
+- **Deferred to T04:** after a cancel or an Error with no reply, the user's message stays in history, so a retry adds a second user message. Decide whether to remove it on failure.
+- **Follow-up:** `_host_of` reads the host from the ollama client's httpx base URL; fakes fall back to `OLLAMA_HOST`. T04 config should pass the host explicitly.
 

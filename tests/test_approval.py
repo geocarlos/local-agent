@@ -73,7 +73,9 @@ def test_write_denied_leaves_the_file_alone(fake_ollama, tmp_path):
     assert len(approver.requests) == 1
     assert result_of(events).content == "User denied file write."
     assert result_of(events).status == "failed"
-    assert client.calls[1]["messages"][-1] == {"role": "tool", "content": "User denied file write."}
+    assert client.calls[1]["messages"][-1] == {
+        "role": "tool", "content": "User denied file write.", "tool_name": "write_file"
+    }
 
 
 def test_exec_granted_runs_the_command(fake_ollama):

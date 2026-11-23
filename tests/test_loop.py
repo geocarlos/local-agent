@@ -62,7 +62,7 @@ def test_one_tool_call_round(fake_ollama, tmp_path):
     # The second model call saw the tool result.
     second_history = client.calls[1]["messages"]
     assert second_history[-2].tool_calls[0].function.name == "read_file"
-    assert second_history[-1] == {"role": "tool", "content": "file body"}
+    assert second_history[-1] == {"role": "tool", "content": "file body", "tool_name": "read_file"}
     assert [m["role"] for m in messages] == ["system", "user", "assistant", "tool", "assistant"]
 
 

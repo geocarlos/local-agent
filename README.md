@@ -9,6 +9,9 @@ A small command-line coding assistant that runs entirely on local models through
 - **Approval gates**: every write and command asks `y/n` first. Writes show a preview of the content.
 - **Guard rails**: shell commands time out after 60 s, tool output is truncated, and each turn is capped at 10 tool rounds.
 - **Tool errors go back to the model**, so it can recover instead of crashing the session.
+- **Streaming**: model text appears as it is generated.
+- **Ctrl+C cancels the current turn** and returns to the `You:` prompt. Ctrl+C at the prompt exits. A tool call that had not run is reported as cancelled to the model, and a half-written reply is dropped.
+- **Clear errors when Ollama is down or the model is missing**: the message names the host and suggests `ollama serve` or `ollama pull <model>`. The REPL keeps running.
 
 ## Requirements
 
@@ -33,7 +36,9 @@ uv sync
 uv run local-agent
 ```
 
-Type a request at the `You:` prompt. Type `exit` or `quit` to leave.
+Type a request at the `You:` prompt. Type `exit` or `quit` to leave. Press Ctrl+C during a reply to cancel it.
+
+If Ollama is not running, you get `Error: Cannot reach Ollama at http://127.0.0.1:11434. Start it with ollama serve ...`. Start the server and send the request again. If the model is not installed, the error suggests `ollama pull qwen3-vl:8b`.
 
 ## Configuration
 
@@ -53,8 +58,8 @@ Model notes: `qwen2.5-coder:7b` did not emit structured tool calls in testing. `
 ```
 src/local_agent/
   __init__.py          # main() entry point
-  core/loop.py         # agent loop: one user turn of model/tool rounds; emits events, asks the approver
-  core/events.py       # event types (text, tool_call, tool_result, approval_request, turn_done, error)
+  core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
+  core/events.py       # event types (text_delta, tool_call, tool_result, approval_request, turn_done, error)
   permissions.py       # risk tiers, approval policy (read auto-allowed), Approver protocol
   tools/registry.py    # @tool decorator, JSON schema from type hints, Tool objects
   tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
@@ -66,7 +71,8 @@ tests/
   test_loop.py         # loop, tool errors, round cap, event payloads
   test_registry.py     # schema generation, risk tiers, approval requests
   test_approval.py     # write/exec granted and denied, reads not asking, event order
-  test_cli.py          # y/n approver, rendering, REPL
+  test_cli.py          # y/n approver, rendering, REPL, Ctrl+C at the prompt and during a turn
+  test_streaming.py    # streamed deltas, tool calls across chunks, cancel and history invariant, Ollama errors
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
 
@@ -74,7 +80,9 @@ tests/
 
 The core (`core/`, `tools/`, `permissions.py`) never prints or reads input. It reports through events and asks an `Approver`. The CLI is one frontend: `render(event)` prints events, and `TerminalApprover` asks `[APPROVE] ...? (y/n)`. A GUI or editor extension would supply its own sink and approver.
 
-Events emitted during a turn, in order: `tool_call`, then for write/exec/network tools `approval_request`, then `tool_result`. A turn ends with `text_delta` (the final reply) and `turn_done`. If no approver is passed, risky tools are refused.
+Model text is sent as `text_delta` events while it streams. For each tool call the events are `tool_call`, then for write/exec/network tools `approval_request`, then `tool_result`. A turn ends with `turn_done`, whose `stop_reason` is `end_turn`, `max_turn_requests` or `cancelled`. An Ollama failure ends the turn with an `error` event instead. If no approver is passed, risky tools are refused.
+
+Cancelling: pass a `threading.Event` as `cancel=` to `run_turn`, or press Ctrl+C (the core treats `KeyboardInterrupt` as a cancel). The turn stops between stream chunks, before each round and before each tool call. Every tool call in history gets a tool message: calls that did not run get `"Cancelled by user."` as a failed result, and a reply cut off mid-stream is not added to history.
 
 ## Adding a tool
 
@@ -108,7 +116,7 @@ uv sync          # installs runtime and dev dependencies (pytest)
 uv run pytest    # runs the tests; no Ollama needed
 ```
 
-The loop takes the Ollama client as a parameter (`run_turn(messages, client=...)`), so tests pass a `FakeOllama` that returns scripted text replies and tool calls. CI runs the same tests on `windows-latest` for every push to `main` and every pull request.
+The loop takes the Ollama client as a parameter (`run_turn(messages, client=...)`), so tests pass a `FakeOllama` that returns scripted text replies and tool calls, streamed as chunks (`chunk_chars=` splits the text; `Raise` and `Run` steps script errors and cancel points). CI runs the same tests on `windows-latest` for every push to `main` and every pull request.
 
 ## Safety
 

@@ -27,7 +27,7 @@ ToolKind = Literal[
     "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"
 ]
 
-# ACP StopReason values (full set). The core emits end_turn, max_turn_requests and (T03) cancelled.
+# ACP StopReason values (full set). The core emits end_turn, max_turn_requests and cancelled.
 StopReason = Literal["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"]
 
 # ACP ToolCallStatus values for a finished call.
@@ -36,7 +36,7 @@ ToolStatus = Literal["completed", "failed"]
 
 @dataclass(frozen=True)
 class TextDelta:
-    """Model text for the frontend. Until streaming (T03) one delta holds the whole reply."""
+    """A piece of model text, sent as it streams. Joined in order, the deltas of one reply are its text."""
 
     text: str
     type: ClassVar[str] = "text_delta"
@@ -111,7 +111,11 @@ class Decision(StrEnum):
 
 @dataclass(frozen=True)
 class TurnDone:
-    """End of a user turn. `text` is the final reply, or None if there was none."""
+    """End of a user turn. `text` is the final reply, or None if there was none.
+
+    `stop_reason="cancelled"` means the turn was cancelled (Ctrl+C or a cancel
+    event). Tool calls that had not run are answered with a failed ToolResult.
+    """
 
     stop_reason: StopReason
     text: str | None = None
@@ -121,7 +125,10 @@ class TurnDone:
 
 @dataclass(frozen=True)
 class Error:
-    """A failure the frontend should show. Tool failures are ToolResults, not Errors."""
+    """A failure the frontend should show, such as Ollama being unreachable. Tool failures are ToolResults, not Errors.
+
+    An Error ends the turn: no TurnDone follows it (this matches ACP, where a failed prompt is a JSON-RPC error).
+    """
 
     message: str
     type: ClassVar[str] = "error"
