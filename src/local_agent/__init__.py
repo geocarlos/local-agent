@@ -1,4 +1,4 @@
-from local_agent.agent import run
+from local_agent.frontends.cli import run
 
 
 def main() -> None:

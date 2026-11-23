@@ -37,14 +37,14 @@ Type a request at the `You:` prompt. Type `exit` or `quit` to leave.
 
 ## Configuration
 
-Settings are constants at the top of `src/local_agent/agent.py`:
+Settings are module constants for now (a config file comes later):
 
-| Constant | Default | Purpose |
-| --- | --- | --- |
-| `MODEL` | `qwen3-vl:8b` | Ollama model name |
-| `MAX_OUTPUT_CHARS` | `8000` | Max characters of tool output sent to the model |
-| `MAX_TOOL_ROUNDS` | `10` | Max model/tool rounds per user message |
-| `COMMAND_TIMEOUT_S` | `60` | Timeout for shell commands, in seconds |
+| Constant | Default | Where | Purpose |
+| --- | --- | --- | --- |
+| `MODEL` | `qwen3-vl:8b` | `core/loop.py` | Ollama model name |
+| `MAX_TOOL_ROUNDS` | `10` | `core/loop.py` | Max model/tool rounds per user message |
+| `MAX_OUTPUT_CHARS` | `8000` | `tools/builtin.py` | Max characters of tool output sent to the model |
+| `COMMAND_TIMEOUT_S` | `60` | `tools/builtin.py` | Timeout for shell commands, in seconds |
 
 Model notes: `qwen2.5-coder:7b` did not emit structured tool calls in testing. `qwen3-vl:8b` did.
 
@@ -52,9 +52,26 @@ Model notes: `qwen2.5-coder:7b` did not emit structured tool calls in testing. `
 
 ```
 src/local_agent/
-  __init__.py   # main() entry point
-  agent.py      # tools, tool dispatch, and the chat loop
+  __init__.py        # main() entry point
+  core/loop.py       # agent loop: one user turn of model/tool rounds
+  tools/__init__.py  # tool table and dispatch (execute_tool)
+  tools/builtin.py   # read_file, write_file, run_command
+  frontends/cli.py   # interactive terminal REPL
+tests/
+  fakes.py           # FakeOllama: scripted model replies, no real model
+  conftest.py        # fake_ollama fixture
+  test_loop.py       # loop, tool errors, round cap, REPL
+.github/workflows/ci.yml  # pytest on windows-latest
 ```
+
+## Development
+
+```sh
+uv sync          # installs runtime and dev dependencies (pytest)
+uv run pytest    # runs the tests; no Ollama needed
+```
+
+The loop takes the Ollama client as a parameter (`run_turn(messages, client=...)`), so tests pass a `FakeOllama` that returns scripted text replies and tool calls. CI runs the same tests on `windows-latest` for every push to `main` and every pull request.
 
 ## Safety
 
