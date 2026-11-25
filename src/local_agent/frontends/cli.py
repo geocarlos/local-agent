@@ -33,7 +33,7 @@ from local_agent.core.events import (
 )
 from local_agent.core.model import OLLAMA_ERRORS, describe_error, probe
 from local_agent.permissions import SessionApprovals
-from local_agent.tools import mcp_tools
+from local_agent.tools import mcp_tools, plugins
 
 CONTEXT_WARNING_FRACTION = 0.9  # warn when the prompt uses this share of num_ctx
 
@@ -137,6 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", help="tool profile: minimal (read tools), coding (read, write and exec; the default), "
                                           "or all (adds web_fetch when enabled in config)")
     parser.add_argument("--config", type=Path, help="config file to read instead of the per-user config.toml")
+    parser.add_argument("--no-plugins", action="store_true",
+                        help="do not load plugins (the tools folder and entry points); see README")
     return parser
 
 
@@ -154,6 +156,7 @@ def settings_from_args(args: argparse.Namespace, *, env: Mapping[str, str] | Non
             "num_ctx": args.num_ctx,
             "workspace": str(args.cwd) if args.cwd is not None else None,
             "tool_profile": args.profile,
+            "plugins_enabled": False if getattr(args, "no_plugins", False) else None,
         },
     )
 
@@ -172,7 +175,8 @@ def _startup_checks(client, settings: Settings) -> None:
 def run(settings: Settings | None = None, client: loop.ChatClient | None = None) -> None:
     """Interactive REPL. `settings` defaults to Settings() (no file or environment is read).
 
-    The MCP servers in `settings.mcp_servers` are started first and stopped when the REPL exits.
+    Plugins (tools/plugins.py) load first, after the built-in tools; then the MCP servers in
+    `settings.mcp_servers` start. Both are removed when the REPL exits.
     """
     settings = Settings() if settings is None else settings
     if client is None:
@@ -180,12 +184,20 @@ def run(settings: Settings | None = None, client: loop.ChatClient | None = None)
     messages = loop.new_messages()
     approver = TerminalApprover()
     session = SessionApprovals()  # "allow always" answers last until this REPL exits
+    plugin_runtime = None
+    mcp = None
     try:
-        mcp = mcp_tools.start_mcp_servers(settings.mcp_servers, timeout_s=settings.command_timeout_s)
-    except KeyboardInterrupt:  # Ctrl+C while the servers start: nothing is running yet
-        print()
-        return
-    try:
+        try:
+            plugin_runtime = plugins.load_plugins(settings)
+            mcp = mcp_tools.start_mcp_servers(settings.mcp_servers, timeout_s=settings.command_timeout_s)
+        except KeyboardInterrupt:  # Ctrl+C while plugins or servers start: nothing is left running
+            print()
+            return
+        for line in plugin_runtime.warnings:
+            print(line)
+        summary = plugins.describe_loaded(plugin_runtime)
+        if summary is not None:
+            print(summary)
         for line in mcp.warnings:
             print(line)
         print(f"Local Agent ready ({settings.model}). Type 'exit' to quit.")
@@ -208,7 +220,10 @@ def run(settings: Settings | None = None, client: loop.ChatClient | None = None)
                 # so that sending it again does not put it into the history twice.
                 del messages[start]
     finally:
-        mcp.close()
+        if mcp is not None:
+            mcp.close()
+        if plugin_runtime is not None:
+            plugin_runtime.close()
 
 
 if __name__ == "__main__":

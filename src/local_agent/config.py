@@ -38,6 +38,8 @@ DEFAULT_TOOL_PROFILE = "coding"
 MCP_RISKS = ("read", "write", "exec", "network")
 DEFAULT_MCP_RISK = "exec"  # always ask, unless the config says otherwise
 MCP_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,31}")  # no underscore: "__" separates server and tool
+# Plugins (see tools/plugins.py): the folder under the config folder that holds *.py plugin files.
+PLUGIN_DIR_NAME = "tools"
 
 MIN_NUM_CTX = 512
 
@@ -83,6 +85,12 @@ class Settings:
     network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S
     # MCP servers started at launch, by name (see TASKS.md T09). Empty: none.
     mcp_servers: Mapping[str, McpServer] = field(default_factory=dict)
+    # Plugins (see tools/plugins.py): tools from the plugin folder and from entry points. On by default.
+    plugins_enabled: bool = True
+    # Plugins not to load, by file stem or entry point name.
+    disabled_plugins: tuple[str, ...] = ()
+    # The plugin folder. None: the tools folder under the config folder (see plugin_dir_of).
+    plugin_dir: Path | None = None
     # Relative tool paths resolve against it, and paths outside it need approval (see sandbox.py).
     workspace: Path = field(default_factory=Path.cwd)
 
@@ -91,6 +99,16 @@ def config_path() -> Path:
     """Where the config file lives for this user (%APPDATA%\\local-agent\\config.toml on Windows)."""
     folder = platformdirs.user_config_dir(APP_NAME, appauthor=False, roaming=True)
     return Path(folder) / CONFIG_FILE_NAME
+
+
+def default_plugin_dir() -> Path:
+    """The per-user plugin folder: <config folder>\\tools. The app does not create it."""
+    return config_path().parent / PLUGIN_DIR_NAME
+
+
+def plugin_dir_of(settings: Settings) -> Path:
+    """The plugin folder in use for these settings: `plugin_dir` if set, else the per-user folder."""
+    return settings.plugin_dir if settings.plugin_dir is not None else default_plugin_dir()
 
 
 def load_settings(
@@ -121,7 +139,7 @@ def load_settings(
 
 
 _FLAG_NAMES = {"model": "--model", "host": "--host", "num_ctx": "--num-ctx", "workspace": "--cwd",
-               "tool_profile": "--profile"}
+               "tool_profile": "--profile", "plugins_enabled": "--no-plugins"}
 _KNOWN_KEYS = {f.name for f in fields(Settings)}
 
 
@@ -188,6 +206,23 @@ def _check(key: str, value: Any, *, source: str, base: Path | None = None) -> An
         return _directory(value, source, base)
     if key == "mcp_servers":
         return _mcp_servers(value, source, base)
+    if key == "plugins_enabled":
+        if not isinstance(value, bool):
+            raise ConfigError(f"{source} must be true or false, got {value!r}")
+        return value
+    if key == "disabled_plugins":
+        if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+            raise ConfigError(f"{source} must be a list of plugin names (file stems or entry point names), got {value!r}")
+        return tuple(v.strip() for v in value)
+    if key == "plugin_dir":
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"{source} must be a folder path, got {value!r}")
+        path = Path(value.strip()).expanduser()  # the folder need not exist: nothing is created or required
+        if not path.is_absolute():
+            if base is None:
+                raise ConfigError(f"{source} must be an absolute path, got {value!r}")
+            path = base / path
+        return path.resolve()
     raise ConfigError(f"unknown setting {key!r}")
 
 

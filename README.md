@@ -78,6 +78,8 @@ test_command = "uv run pytest -q"
 workspace = "C:\\src\\my-project"   # or a relative path, taken from the config file's folder
 tool_profile = "coding"
 network_enabled = false             # true offers web_fetch under the all profile
+plugins_enabled = true              # false (or --no-plugins) loads no plugins
+disabled_plugins = ["word_count"]   # plugins not to load, by file name (without .py) or entry point name
 ```
 
 | Key | Flag | Default | Purpose |
@@ -93,6 +95,9 @@ network_enabled = false             # true offers web_fetch under the all profil
 | `tool_profile` | `--profile` | `coding` | Which tools the model is offered: `minimal`, `coding` or `all`. See Tool profiles. |
 | `network_enabled` | | `false` | Lets the network tools (`web_fetch`) be offered. Off by default. |
 | `network_timeout_s` | | `20` | Time limit for `web_fetch`, in seconds. It covers the whole fetch (redirects included) and each connect or read. A fetch that runs longer is stopped and the model is told. |
+| `plugins_enabled` | `--no-plugins` | `true` | Loads the plugins (the tools folder and entry points). See Plugins. |
+| `disabled_plugins` | | `[]` | Plugins not to load, by file stem or entry point name. |
+| `plugin_dir` | | `<config folder>\tools` | The folder of plugin files. The app does not create it. A relative path is taken from the config file's folder. |
 
 An unknown key, a wrong type or an out-of-range value stops the program at startup with a message that names the file or flag, and exit code 2. Example: `Error: C:\...\config.toml: num_ctx must be at least 512, got 100`.
 
@@ -144,6 +149,102 @@ risk = "read"                   # optional, the tier for this tool only
 
 The official `mcp` Python SDK (2.x) does the protocol work. It negotiates the protocol version with each server, and servers that only know the older `initialize` handshake also work.
 
+### Plugins
+
+Plugins add tools without changing the agent's code. They are loaded once at startup, after the built-in tools and before the MCP servers. There are two sources.
+
+**1. The tools folder.** Put a `*.py` file in `%APPDATA%\local-agent\tools\` (the per-user config folder plus `tools`; `plugin_dir` in the config changes it). The folder is not created for you. Only `*.py` files directly in it are loaded (not subfolders, and not files whose name starts with `_`). Each file is one plugin, named by its file name without `.py`. Its `@tool` functions are registered exactly like the built-in tools.
+
+Adding a tool is one decorated function. This file is `%APPDATA%\local-agent\tools\word_count.py`:
+
+```python
+from local_agent.plugin import Risk, tool
+
+
+@tool(risk=Risk.READ)
+def count_words(text: str) -> str:
+    """Count the words in a piece of text."""
+    return f"{len(text.split())} words"
+```
+
+And a test for it. Keep a copy of the file in the repository (for example `tests/word_plugin/word_count.py`), so the test does not depend on the user's folder. The test loads that folder with `load_plugins`, as `tests/test_plugins.py` does:
+
+```python
+# tests/test_word_count.py
+from pathlib import Path
+
+from local_agent.config import Settings
+from local_agent.tools.plugins import load_plugins
+from local_agent.tools.registry import REGISTRY
+
+PLUGIN_FOLDER = Path(__file__).parent / "word_plugin"  # holds word_count.py
+
+
+def test_count_words(tmp_path):
+    runtime = load_plugins(Settings(plugin_dir=PLUGIN_FOLDER, workspace=tmp_path))
+    try:
+        # Only this plugin is checked: other installed plugins may have their own warnings.
+        assert not [w for w in runtime.warnings if "word_count" in w]
+        assert [t for p in runtime.loaded if p.name == "word_count" for t in p.tools] == ["count_words"]
+        assert REGISTRY["count_words"].call({"text": "one two three"}) == "3 words"
+    finally:
+        runtime.close()  # removes the plugin's tools from the registry again
+```
+
+The test suite also has an autouse fixture (`tests/conftest.py`) that restores the registry after every test, so a plugin tool never leaks into another test.
+
+**Helper files.** A file whose name starts with `_` is not a plugin, but a plugin can import it with a relative import, so plugins in the folder can share code:
+
+```python
+# %APPDATA%\local-agent\tools\_text_utils.py  (not loaded as a plugin)
+def shout(text: str) -> str:
+    return text.upper()
+```
+
+```python
+# %APPDATA%\local-agent\tools\loud.py
+from local_agent.plugin import Risk, tool
+from . import _text_utils
+
+
+@tool(risk=Risk.READ)
+def shout(text: str) -> str:
+    """Upper-case a piece of text."""
+    return _text_utils.shout(text)
+```
+
+Use relative imports (`from . import _helper`) and names that start with `_` for helpers. Absolute imports of a helper by its file name do not work. Each load gets its own `local_agent_plugins` package, so two plugin folders in one process do not share helpers.
+
+**2. Entry points.** A package can install plugins with the entry point group `local_agent.tools`. The entry point's value names a module, and importing that module registers its `@tool` functions:
+
+```toml
+# pyproject.toml of the package that provides the tools
+[project.entry-points."local_agent.tools"]
+my_tools = "my_package.tools"
+```
+
+Entry points are loaded sorted by name, after the folder. A module that was already imported by other code in this process is not run again, so its tools are not registered; the loader warns when a plugin registers no tools. An entry point that names a function or attribute (`module:function`) is not supported: it must name a module. It is refused before anything is imported, so it registers nothing and does not affect the module's other entry point.
+
+**Public API.** Import from `local_agent.plugin` only; the rest of the package is internal and may change.
+
+- `tool(risk=..., ...)`: the same decorator as the built-in tools (see Adding a tool). `risk` is required.
+- `Risk`: `READ`, `WRITE`, `EXEC`, `NETWORK`.
+- `ToolContext`: passed as `context: ToolContext`; it has `cancel` (a `threading.Event` that is set when the turn is cancelled), `workspace`, and the limits.
+- `ToolCancelled`: raise it from a long tool that stopped because `context.cancel` was set.
+- `Preview`: returned by a `preview=` hook.
+
+**Risk rule.** A plugin tool must declare its risk: `@tool(risk=Risk.READ)`. A tool without `risk` (or with a value that is not a tier) is not loaded, and the warning says so. It is never assumed to be safe. Profiles and approvals then apply as for the built-in tools: `read` runs without asking, `write`, `exec` and `network` ask, and `network` needs `network_enabled`. A plugin tool's path parameters (`paths=("path",)`) get the workspace check, so a path outside the workspace is asked about separately.
+
+**Turning plugins off.** `plugins_enabled = false` in the config, or `--no-plugins` on the command line, loads nothing. `disabled_plugins = ["name"]` skips single plugins. The match is case-insensitive, and one name is checked against both the file names (without `.py`) and the entry point names, so a name given there disables a file plugin and an entry point that share it.
+
+**Failures.** A plugin that fails to import, has a syntax error, raises an exception, or defines an invalid tool prints one warning that names the plugin and the error, and the agent starts without it. Every tool the failed plugin had registered is removed again, so a plugin is either fully loaded or not loaded at all. The other plugins still load. A plugin that loads but registers no tools prints a warning (`Warning: plugin 'x' registered no tools.`) and is left out of the loaded line. A plugin tool whose name is already used (by a built-in tool or by another plugin's tool) is skipped with a warning; a plugin can never replace an existing tool. At startup the CLI prints one line such as `[plugins] loaded: word_count (1 tool), my_tools (3 tools)` when at least one plugin loaded.
+
+**Self-modification guard.** The agent cannot quietly plant code where it will be loaded from. Any `write_file` or `edit_file` whose resolved target is inside the plugin folder always asks, and "allow for this session" is never offered or used for it. This is the same rule that covers `.git` folders (see `sandbox.py`). Writes made by `run_command` always ask anyway, as before.
+
+**Load order.** Built-in tools (registered when the package is imported), then the plugin folder in name order, then the entry points in name order, then the MCP servers. A name that is already taken when a plugin registers it is skipped, so the built-in and earlier tools keep their names.
+
+**Security.** A plugin is Python code that runs with the agent's permissions, not a sandboxed tool. Put in the folder only code you would run yourself.
+
 ## Project layout
 
 ```
@@ -159,6 +260,8 @@ src/local_agent/
   mcp_hub.py           # MCP client runtime: stdio servers on one background thread with its own asyncio loop
   tools/registry.py    # @tool decorator (risk, paths=), add_tool (explicit schema), JSON schema from type hints, Tool objects, ToolContext
   tools/mcp_tools.py   # MCP servers' tools: <server>__<tool> names, risk tiers from the config, results as text
+  tools/plugins.py     # plugin loading: the tools folder and the local_agent.tools entry points; roll back and warn per plugin
+  plugin.py            # the public API for plugin authors: tool, Risk, ToolContext, ToolCancelled, Preview
   tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
   tools/builtin.py     # read_file (read), write_file (write), run_command and run_tests (exec; cmd by default, or PowerShell)
   tools/edit_tools.py  # edit_file (write): exact-match replace, line endings and BOM, unified diff for previews
@@ -193,6 +296,8 @@ tests/
   test_mcp_tools.py    # MCP naming and sanitising, name collisions, reserved argument, descriptions, result text
   test_mcp_runtime.py  # real stdio servers in tests/mcp_servers: listing, risk tiers, calls, errors, timeout, cancel, exit, shutdown
   test_cli_mcp.py      # REPL with MCP servers: start-up warnings, argument preview, stop at exit and at Ctrl+C
+  test_plugins.py      # plugin folder and entry points, failure isolation and rollback, name clashes, risk, switches, the plugin-folder write guard
+  plugins/             # sample plugin files used by test_plugins.py (sample_plugin.py, entry_sample.py)
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
 
@@ -212,7 +317,7 @@ Thinking text is kept in the assistant message in history, and it counts toward 
 
 ## Adding a tool
 
-A tool is one decorated function. Its docstring becomes the description the model sees, and type hints become the JSON schema:
+A tool is one decorated function. A tool can live in the repository (below) or in a plugin file (see Plugins). Its docstring becomes the description the model sees, and type hints become the JSON schema:
 
 ```python
 # src/local_agent/tools/builtin.py (or any module imported by tools/__init__.py)

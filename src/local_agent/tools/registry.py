@@ -36,7 +36,8 @@ core (see core/loop.py) through permissions.Approver.
 import inspect
 import threading
 import types
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -64,6 +65,7 @@ class ToolContext:
     test_command: str | None = None                   # the configured test_command, if any
     network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S  # web_fetch: limit for the whole fetch, and per connect or read
     cancel: threading.Event | None = None             # set when the turn is cancelled; long tools may poll it
+    plugin_dir: Path | None = None                    # the plugin folder: writes into it always ask (see sandbox.py)
 
 
 class Location(StrEnum):
@@ -266,6 +268,26 @@ class Tool:
 
 REGISTRY: dict[str, Tool] = {}
 
+# While plugin modules are imported (see skip_name_collisions), a @tool whose name is taken is recorded here
+# and skipped, instead of raising. None the rest of the time.
+_skipped_names: list[str] | None = None
+
+
+@contextmanager
+def skip_name_collisions(skipped: list[str]) -> Iterator[None]:
+    """While this is active, a @tool on REGISTRY whose name is taken is skipped and its name appended to `skipped`.
+
+    Outside it, a duplicate name raises ValueError as before. Used by the plugin loader, so that a plugin
+    tool can never replace a built-in tool or another plugin's tool.
+    """
+    global _skipped_names
+    previous = _skipped_names
+    _skipped_names = skipped
+    try:
+        yield
+    finally:
+        _skipped_names = previous
+
 
 def add_tool(
     *,
@@ -335,6 +357,9 @@ def tool(
         table = REGISTRY if registry is None else registry
         name = fn.__name__
         if name in table:
+            if registry is None and _skipped_names is not None:
+                _skipped_names.append(name)  # a plugin's duplicate: skipped, and reported by the loader
+                return fn
             raise ValueError(f"tool {name!r} is already registered")
         description = inspect.getdoc(fn)
         if not description:

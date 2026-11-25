@@ -148,12 +148,17 @@ def read_file(
     return truncate(f"[lines {first}-{last} of {total}]\n{body}", context.max_output_chars)
 
 
+def _allow_always(path: str, context: ToolContext, **_: object) -> bool:
+    """Whether "allow for this session" is offered for this write (see sandbox.session_allowance_ok)."""
+    return sandbox.session_allowance_ok(path, plugin_dir=context.plugin_dir)
+
+
 @tool(
     risk=Risk.WRITE,
     denied_message="User denied file write.",
     approval_title=_write_title,
     preview=_write_preview,
-    allow_always=sandbox.session_allowance_ok,
+    allow_always=_allow_always,
     paths=("path",),
 )
 def write_file(path: str, content: str) -> str:
