@@ -32,16 +32,30 @@ from local_agent.core.events import (
     Usage,
 )
 from local_agent.core.model import OLLAMA_ERRORS, describe_error, probe
+from local_agent.permissions import SessionApprovals
 
 CONTEXT_WARNING_FRACTION = 0.9  # warn when the prompt uses this share of num_ctx
 
 
 class TerminalApprover:
-    """Asks y/n on the terminal. Anything other than 'y' is a refusal."""
+    """Asks on the terminal. 'y' allows once; 'a' allows for this session when the request offers it.
+
+    Anything else is a refusal. A request that does not offer "allow always" (a path outside the
+    workspace) asks y/n only, and 'a' there is refused.
+    """
 
     def decide(self, request: ApprovalRequest) -> Decision:
-        answer = input(f"\n[APPROVE] {request.title}? (y/n): ").strip().lower()
-        return Decision.ALLOW_ONCE if answer == "y" else Decision.REJECT_ONCE
+        offers_always = "allow_always" in request.options
+        if offers_always:
+            prompt = f"\n[APPROVE] {request.title}? [y]es / [a]lways for this session / [n]o: "
+        else:
+            prompt = f"\n[APPROVE] {request.title}? (y/n): "
+        answer = input(prompt).strip().lower()
+        if answer == "y":
+            return Decision.ALLOW_ONCE
+        if answer in ("a", "always") and offers_always:
+            return Decision.ALLOW_ALWAYS
+        return Decision.REJECT_ONCE
 
 
 class Renderer:
@@ -79,6 +93,9 @@ class Renderer:
             preview = event.preview
             if preview is not None and preview.kind == "text" and preview.path is not None:
                 print(f"\n[PROPOSED CONTENT for '{preview.path}']\n{preview.text}\n[END PROPOSED CONTENT]")
+            elif preview is not None and preview.kind == "diff":
+                label = f" for '{preview.path}'" if preview.path is not None else ""
+                print(f"\n[PROPOSED CHANGES{label}]\n{preview.text}\n[END PROPOSED CHANGES]")
         elif isinstance(event, TurnDone):
             if event.stop_reason == "max_turn_requests":
                 print(f"\nAgent: stopped after {event.rounds} tool rounds without a final answer. "
@@ -153,6 +170,7 @@ def run(settings: Settings | None = None, client: loop.ChatClient | None = None)
         client = ollama.Client(host=settings.host)
     messages = loop.new_messages()
     approver = TerminalApprover()
+    session = SessionApprovals()  # "allow always" answers last until this REPL exits
 
     print(f"Local Agent ready ({settings.model}). Type 'exit' to quit.")
     _startup_checks(client, settings)
@@ -168,7 +186,7 @@ def run(settings: Settings | None = None, client: loop.ChatClient | None = None)
         messages.append({"role": "user", "content": user_input})
         # Ctrl+C during the turn is handled by the core: the turn ends as cancelled and the prompt returns.
         loop.run_turn(messages, client=client, settings=settings,
-                      emit=Renderer(settings.num_ctx), approver=approver)
+                      emit=Renderer(settings.num_ctx), approver=approver, session=session)
         if len(messages) == start + 1:
             # No reply was recorded (an Ollama error, or Ctrl+C before one): drop the message
             # so that sending it again does not put it into the history twice.

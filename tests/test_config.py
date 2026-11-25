@@ -272,3 +272,18 @@ def test_config_path_is_under_appdata_on_windows():
 def test_config_path_is_named_config_toml():
     assert config_path().name == "config.toml"
     assert config_path().parent.name == "local-agent"
+
+def test_test_command_defaults_to_none_and_is_read_from_the_file(tmp_path):
+    empty = write_config(tmp_path, "")
+    assert load_settings(config_file=empty, env={}).test_command is None
+
+    configured = write_config(tmp_path, 'test_command = "  uv run pytest -q  "\n')
+    assert load_settings(config_file=configured, env={}).test_command == "uv run pytest -q"
+
+
+@pytest.mark.parametrize("value", ['""', '"   "', "5", "true"])
+def test_test_command_must_be_a_non_empty_string(tmp_path, value):
+    path = write_config(tmp_path, f"test_command = {value}\n")
+
+    with pytest.raises(ConfigError, match="test_command must be a non-empty command line"):
+        load_settings(config_file=path, env={})

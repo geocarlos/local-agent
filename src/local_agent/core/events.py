@@ -33,6 +33,9 @@ StopReason = Literal["end_turn", "max_tokens", "max_turn_requests", "refusal", "
 # ACP ToolCallStatus values for a finished call.
 ToolStatus = Literal["completed", "failed"]
 
+# Answers offered for a tool's own approval request (the outside-workspace request offers only allow/reject once).
+TOOL_APPROVAL_OPTIONS = ("allow_once", "allow_always", "reject_once")
+
 
 @dataclass(frozen=True)
 class TextDelta:
@@ -77,12 +80,15 @@ class Preview:
     """What the user should see before approving.
 
     `kind="text"` is proposed file content (with `path`). `kind="command"` is the
-    command line to run. T07 adds `"diff"`. `text` is already truncated for display.
+    command line to run, with `shell` naming the shell ("PowerShell" or "cmd").
+    `kind="diff"` is a unified diff (with `path` for a file; no path for a commit
+    summary). `text` is already truncated for display.
     """
 
     text: str
     path: str | None = None
     kind: Literal["text", "command", "diff"] = "text"
+    shell: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,10 @@ class ApprovalRequest:
     "outside_workspace" for a path argument that resolves outside the workspace
     (see local_agent.sandbox). The second request is asked separately, so a
     write outside the workspace asks twice.
+
+    `options` lists the answers the frontend may offer, as ACP PermissionOption
+    kinds. A tool's own request offers "allow_always" (allow for this session, for
+    this tool in this workspace). An outside-workspace request never does.
     """
 
     tool_call_id: str
@@ -106,21 +116,24 @@ class ApprovalRequest:
     arguments: dict[str, Any] = field(default_factory=dict)
     preview: Preview | None = None
     scope: Literal["tool", "outside_workspace"] = "tool"
+    options: tuple[str, ...] = ("allow_once", "reject_once")
     type: ClassVar[str] = "approval_request"
 
 
 class Decision(StrEnum):
     """The answer to an ApprovalRequest. Values are ACP PermissionOption kinds.
 
-    T07 adds ALLOW_ALWAYS ("allow_always") for session-wide approvals.
+    ALLOW_ALWAYS is "allow for this session" for the tool and workspace of the
+    request (see permissions.SessionApprovals). REJECT_ALWAYS is not offered yet.
     """
 
     ALLOW_ONCE = "allow_once"
+    ALLOW_ALWAYS = "allow_always"
     REJECT_ONCE = "reject_once"
 
     @property
     def allowed(self) -> bool:
-        return self is Decision.ALLOW_ONCE
+        return self in (Decision.ALLOW_ONCE, Decision.ALLOW_ALWAYS)
 
 
 @dataclass(frozen=True)

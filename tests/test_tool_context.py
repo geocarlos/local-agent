@@ -18,7 +18,7 @@ def make_tool(fn, risk=Risk.READ):
 
 def test_the_context_parameter_is_not_in_the_schema():
     assert set(TOOLS["read_file"].parameters["properties"]) == {"path", "start_line", "end_line"}
-    assert set(TOOLS["run_command"].parameters["properties"]) == {"command"}
+    assert set(TOOLS["run_command"].parameters["properties"]) == {"command", "shell"}
     assert TOOLS["run_command"].parameters["required"] == ["command"]
 
 
@@ -50,9 +50,10 @@ def test_read_file_without_a_context_uses_the_defaults(tmp_path):
 
 
 def test_run_command_uses_the_context_timeout():
-    command = f'"{sys.executable}" -c "import time; time.sleep(5)"'
+    command = f'& "{sys.executable}" -c "import time; time.sleep(5)"'
 
-    result = TOOLS["run_command"].call({"command": command}, ToolContext(command_timeout_s=1))
+    result = TOOLS["run_command"].call({"command": command, "shell": "powershell"},
+                                       ToolContext(command_timeout_s=1))
 
     assert result == "Error: command timed out after 1s and was killed."
 

@@ -94,13 +94,31 @@ def check_arguments(
     outside: list[ResolvedPath] = []
     for name in path_args:
         # Absent or null means "not given": an optional path then defaults to the workspace in the tool.
-        if args.get(name) is None:
+        value = args.get(name)
+        if value is None:
             continue
-        item = resolve(args[name], workspace)
-        args[name] = str(item.path)
-        if not item.inside:
-            outside.append(item)
+        if isinstance(value, list):  # a list of paths (list[str] parameters): each one is checked
+            items = [resolve(v, workspace) for v in value]
+            args[name] = [str(item.path) for item in items]
+        else:
+            items = [resolve(value, workspace)]
+            args[name] = str(items[0].path)
+        outside.extend(item for item in items if not item.inside)
     return args, outside
+
+
+def is_git_path(path: str) -> bool:
+    """True if any part of the (resolved) path is a folder named .git, in any case."""
+    return any(part.casefold() == ".git" for part in Path(path).parts)
+
+
+def session_allowance_ok(path: str, **_: object) -> bool:
+    """The `allow_always` hook of a tool that writes one file: never for a path under .git (hooks, config).
+
+    Such a write asks every time and is never offered "allow for this session". Keyword arguments
+    other than `path` are ignored, so the hook fits any tool whose path argument is named `path`.
+    """
+    return not is_git_path(path)
 
 
 def outside_request(
