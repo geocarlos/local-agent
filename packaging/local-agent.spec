@@ -40,6 +40,9 @@ hiddenimports = [
 datas = []
 for dist in METADATA:
     datas += copy_metadata(dist)
+# The web UI (T16): the static page and its scripts. In the bundle they sit in local_agent/web, which
+# webassets.web_root() finds under sys._MEIPASS.
+datas.append((str(ROOT / "src" / "local_agent" / "web"), "local_agent/web"))
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "packaging" / "launcher.py")],

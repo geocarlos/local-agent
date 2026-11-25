@@ -111,10 +111,10 @@ def test_the_servers_own_origins_are_accepted(app_client, origin):
         assert json.loads(ws.receive_text())["id"] == 9
 
 
-def test_the_index_page_does_not_open_the_agent_and_has_no_docs_routes(app_client):
+def test_the_page_does_not_open_the_agent_and_has_no_docs_routes(app_client):
     response = app_client.get("/")
     assert response.status_code == 200
-    assert "/ws" in response.text and TOKEN not in response.text
+    assert "<title>local-agent</title>" in response.text and TOKEN not in response.text
     for path in ("/docs", "/openapi.json", "/redoc"):
         assert app_client.get(path).status_code == 404
 
@@ -189,6 +189,26 @@ def test_a_write_is_approved_over_the_websocket_and_lands_in_the_workspace(tmp_p
     assert [o["optionId"] for o in permissions[0]["params"]["options"]] == ["allow_once", "allow_always", "reject_once"]
     assert messages[-1]["result"]["stopReason"] == "end_turn"
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "from web"
+
+
+def test_an_edit_request_carries_the_diff_preview(tmp_path):
+    (tmp_path / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+    app, _ = _app(tmp_path, [tool_reply(("edit_file", {"path": "notes.txt", "old_text": "beta",
+                                                        "new_text": "gamma"})),
+                             text_reply("Edited.")])
+    with TestClient(app) as http:
+        with http.websocket_connect(f"/ws?token={TOKEN}") as ws:
+            s = _Socket(ws)
+            s.read_until(s.request("initialize", {"protocolVersion": 1}))
+            session_id = s.read_until(s.request("session/new", {"cwd": str(tmp_path), "mcpServers": []}))[-1][
+                "result"]["sessionId"]
+            messages = s.read_until(s.request("session/prompt", {
+                "sessionId": session_id, "prompt": [{"type": "text", "text": "edit it"}]}))
+    permission = next(m for m in messages if m.get("method") == "session/request_permission")
+    preview = permission["params"]["toolCall"]["preview"]
+    assert preview["kind"] == "diff" and preview["path"].endswith("notes.txt")
+    assert "-beta" in preview["text"] and "+gamma" in preview["text"]
+    assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "alpha\ngamma\n"
 
 
 def test_sessions_belong_to_their_connection(tmp_path):
