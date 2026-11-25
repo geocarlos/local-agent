@@ -28,6 +28,7 @@ from local_agent.core.events import (
     ThinkingDelta,
     ToolCall,
     ToolResult,
+    ToolStarted,
     TurnDone,
     Usage,
 )
@@ -82,6 +83,8 @@ class Renderer:
                 self._text_open = True
             print(event.text, end="", flush=True)
             return
+        if isinstance(event, ToolStarted):  # the server frontend reports this; the terminal does not need it
+            return
         self._end_text()
         if isinstance(event, ToolCall):
             print(f"\n[Tool Call] {event.name}({event.arguments})")
@@ -128,8 +131,26 @@ def render(event: Event) -> None:
     Renderer()(event)
 
 
+SUBCOMMANDS_HELP = """\
+subcommands (put the subcommand first, before any flag):
+  chat             the interactive chat; the default when no subcommand is given
+  serve --stdio    the Agent Client Protocol server over stdin and stdout (see docs/protocol.md)
+  gui              a placeholder until a later version
+
+example: local-agent serve --stdio --cwd C:\\work\\my-project
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="local-agent", description="Local coding assistant on Ollama.")
+    """The parser for `local-agent` and `local-agent chat` (the REPL)."""
+    parser = argparse.ArgumentParser(prog="local-agent", description="Local coding assistant on Ollama.",
+                                     epilog=SUBCOMMANDS_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_settings_flags(parser)
+    return parser
+
+
+def add_settings_flags(parser: argparse.ArgumentParser) -> None:
+    """The flags every subcommand that runs the agent takes (chat, serve)."""
     parser.add_argument("--model", help="Ollama model name (default: config file, else qwen3-vl:8b)")
     parser.add_argument("--host", help=f"Ollama server URL (default: OLLAMA_HOST, config file, else {DEFAULT_HOST})")
     parser.add_argument("--num-ctx", type=int, help="context window in tokens, sent to Ollama with every request")
@@ -139,7 +160,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, help="config file to read instead of the per-user config.toml")
     parser.add_argument("--no-plugins", action="store_true",
                         help="do not load plugins (the tools folder and entry points); see README")
-    return parser
 
 
 def settings_from_args(args: argparse.Namespace, *, env: Mapping[str, str] | None = None) -> Settings:
@@ -210,15 +230,11 @@ def run(settings: Settings | None = None, client: loop.ChatClient | None = None)
                 break
             if user_input.lower() in {"exit", "quit"}:
                 break
-            start = len(messages)
             messages.append({"role": "user", "content": user_input})
             # Ctrl+C during the turn is handled by the core: the turn ends as cancelled and the prompt returns.
+            # If no reply was recorded (an Ollama error, or Ctrl+C before one), the core removes the user message.
             loop.run_turn(messages, client=client, settings=settings,
                           emit=Renderer(settings.num_ctx), approver=approver, session=session)
-            if len(messages) == start + 1:
-                # No reply was recorded (an Ollama error, or Ctrl+C before one): drop the message
-                # so that sending it again does not put it into the history twice.
-                del messages[start]
     finally:
         if mcp is not None:
             mcp.close()
