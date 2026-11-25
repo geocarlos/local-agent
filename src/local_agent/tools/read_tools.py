@@ -98,14 +98,13 @@ def list_dir(
 
 @tool(risk=Risk.READ, paths=("path",))
 def glob(
-    pattern: Annotated[str, "Glob pattern relative to the base folder, e.g. '**/*.py' or 'src/*.txt'. "
-                            "No '..' and no absolute paths."],
+    pattern: Annotated[str, "Glob relative to the base folder, e.g. '**/*.py'. No '..' or absolute paths."],
     path: Annotated[str | None, "Base folder for the pattern. Omit for the workspace."] = None,
     *,
     context: ToolContext,
 ) -> str:
-    """Find files and folders by glob pattern ('**' matches any depth). Results are workspace-relative,
-    sorted, folders end with '/', and at most 200 are shown."""
+    """Find files and folders by glob ('**' matches any depth). Paths are sorted and workspace-relative;
+    at most 200 are shown."""
     if not pattern or "\x00" in pattern or ":" in pattern or pattern[0] in "\\/" \
             or ".." in re.split(r"[\\/]", pattern):
         return ("Error: the pattern must be relative to the base folder, with no '..', no drive "
@@ -144,8 +143,8 @@ def grep(
     *,
     context: ToolContext,
 ) -> str:
-    """Search file contents with a regular expression. Each match is 'path:line: text'. Binary files,
-    .git and files over 2 MB are skipped. At most 100 matches are shown."""
+    """Search file contents with a regular expression; each match is 'path:line: text' (at most 100 shown).
+    Binary, .git and files over 2 MB are skipped."""
     try:
         regex = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as e:
@@ -348,8 +347,7 @@ def git_diff(
     *,
     context: ToolContext,
 ) -> str:
-    """Show uncommitted changes as a unified diff. Unstaged by default; staged=true shows what is staged.
-    Untracked files do not appear until they are added."""
+    """Show uncommitted changes as a unified diff (unstaged unless staged=true). Untracked files are not included."""
     args = ["diff", "--no-ext-diff", "--no-textconv"]
     if staged:
         args.append("--cached")

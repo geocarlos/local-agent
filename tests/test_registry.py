@@ -37,7 +37,7 @@ def test_builtin_schemas_match_what_ollama_received_before_t02():
     }
     assert tools.TOOLS["write_file"].schema()["function"] == {
         "name": "write_file",
-        "description": "Write content to a file (asks for approval first).",
+        "description": "Create or overwrite a file with the given content.",
         "parameters": {
             "type": "object",
             "required": ["path", "content"],
@@ -48,10 +48,11 @@ def test_builtin_schemas_match_what_ollama_received_before_t02():
         },
     }
     # T07 added the shell choice to run_command; the schema is now an enum, so a model cannot ask for another shell.
+    # T08 shortened the descriptions (the shape is unchanged; see test_tool_descriptions_stay_short).
     assert tools.TOOLS["run_command"].schema()["function"] == {
         "name": "run_command",
-        "description": ('Run a command in the workspace folder and return its exit code and output '
-                        '(asks for approval first). shell is "cmd" (the default) or "powershell".'),
+        "description": ("Run a command in the workspace folder and return its exit code and output. "
+                        "cmd is the default shell."),
         "parameters": {
             "type": "object",
             "required": ["command"],
@@ -60,7 +61,7 @@ def test_builtin_schemas_match_what_ollama_received_before_t02():
                 "shell": {
                     "type": "string",
                     "enum": ["powershell", "cmd"],
-                    "description": "cmd (the default) runs the Windows command prompt; powershell runs PowerShell.",
+                    "description": "Shell: cmd (the default) or powershell.",
                 },
             },
         },

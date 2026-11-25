@@ -38,7 +38,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Annotated, Literal, Union, get_args, get_origin, get_type_hints
 
-from local_agent.config import DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_MAX_OUTPUT_CHARS
+from local_agent.config import DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_MAX_OUTPUT_CHARS, DEFAULT_NETWORK_TIMEOUT_S
 from local_agent.core.events import TOOL_APPROVAL_OPTIONS, ApprovalRequest, Preview, ToolKind
 from local_agent.permissions import Risk
 
@@ -54,6 +54,7 @@ class ToolContext:
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS
     workspace: Path = field(default_factory=Path.cwd)  # where run_command starts
     test_command: str | None = None                   # the configured test_command, if any
+    network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S  # web_fetch: limit for the whole fetch, and per connect or read
 
 
 class Location(StrEnum):

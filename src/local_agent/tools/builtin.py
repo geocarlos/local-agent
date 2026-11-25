@@ -157,7 +157,7 @@ def read_file(
     paths=("path",),
 )
 def write_file(path: str, content: str) -> str:
-    """Write content to a file (asks for approval first)."""
+    """Create or overwrite a file with the given content."""
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(content, encoding="utf-8")
@@ -175,12 +175,11 @@ def write_file(path: str, content: str) -> str:
 )
 def run_command(
     command: str,
-    shell: Annotated[ShellName,
-                     "cmd (the default) runs the Windows command prompt; powershell runs PowerShell."] = DEFAULT_SHELL,
+    shell: Annotated[ShellName, "Shell: cmd (the default) or powershell."] = DEFAULT_SHELL,
     *,
     context: ToolContext,
 ) -> str:
-    """Run a command in the workspace folder and return its exit code and output (asks for approval first). shell is "cmd" (the default) or "powershell"."""
+    """Run a command in the workspace folder and return its exit code and output. cmd is the default shell."""
     return _execute(_shell(shell), command, context)
 
 
@@ -224,9 +223,8 @@ def run_tests(
     *,
     context: ToolContext,
 ) -> str:
-    """Run the project's tests in the workspace and return the exit code and output (asks for approval first).
-    Uses command if given, else the configured test_command, else 'uv run pytest -q' when there is a
-    pyproject.toml, else 'npm test' when there is a package.json."""
+    """Run the project's tests and return the exit code and output. Uses command if given, else the
+    configured test_command, else detects the project (pyproject.toml or package.json)."""
     resolved = resolve_test_command(command, context)
     if resolved is None:
         return NO_TEST_COMMAND

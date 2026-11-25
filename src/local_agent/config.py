@@ -29,6 +29,10 @@ DEFAULT_NUM_CTX = 8192
 DEFAULT_MAX_TOOL_ROUNDS = 10
 DEFAULT_MAX_OUTPUT_CHARS = 8000
 DEFAULT_COMMAND_TIMEOUT_S = 60
+DEFAULT_NETWORK_TIMEOUT_S = 20
+# The tool profiles (names only; what each one offers is in tools/profiles.py).
+TOOL_PROFILES = ("minimal", "coding", "all")
+DEFAULT_TOOL_PROFILE = "coding"
 
 MIN_NUM_CTX = 512
 
@@ -49,6 +53,12 @@ class Settings:
     command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S
     # The command run_tests uses when it is not given one (None: detect from the workspace).
     test_command: str | None = None
+    # Which tools the model is offered and may run (see tools/profiles.py).
+    tool_profile: str = DEFAULT_TOOL_PROFILE
+    # Network-tier tools (web_fetch) are offered only when this is true. Off by default.
+    network_enabled: bool = False
+    # web_fetch's time limit for the whole fetch (redirects included), and for each connect or read.
+    network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S
     # Relative tool paths resolve against it, and paths outside it need approval (see sandbox.py).
     workspace: Path = field(default_factory=Path.cwd)
 
@@ -86,7 +96,8 @@ def load_settings(
     return Settings(**values)
 
 
-_FLAG_NAMES = {"model": "--model", "host": "--host", "num_ctx": "--num-ctx", "workspace": "--cwd"}
+_FLAG_NAMES = {"model": "--model", "host": "--host", "num_ctx": "--num-ctx", "workspace": "--cwd",
+               "tool_profile": "--profile"}
 _KNOWN_KEYS = {f.name for f in fields(Settings)}
 
 
@@ -134,6 +145,17 @@ def _check(key: str, value: Any, *, source: str, base: Path | None = None) -> An
         return _int_at_least(key, value, 1, source)
     if key == "command_timeout_s":
         return _int_at_least(key, value, 1, source)
+    if key == "network_timeout_s":
+        return _int_at_least(key, value, 1, source)
+    if key == "network_enabled":
+        if not isinstance(value, bool):
+            raise ConfigError(f"{source} must be true or false, got {value!r}")
+        return value
+    if key == "tool_profile":
+        if not isinstance(value, str) or value.strip() not in TOOL_PROFILES:
+            known = ", ".join(TOOL_PROFILES)
+            raise ConfigError(f"{source} must be one of {known}, got {value!r}")
+        return value.strip()
     if key == "test_command":
         if not isinstance(value, str) or not value.strip():
             raise ConfigError(f"{source} must be a non-empty command line, got {value!r}")
