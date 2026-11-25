@@ -49,7 +49,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Handle `..`, absolute paths, symlinks/junctions, and drive-letter differences on Windows.
 - **Done when:** escape attempts are tested and blocked.
 
-## ☑️ M1: more tools
+## ✅ M1: more tools
 
 ### ✅ T06 Read-tier tools: `done`
 - `read_file` with line ranges, `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`. Auto-allowed, sandboxed, output truncated.
@@ -70,7 +70,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Use the official `mcp` Python SDK. Configure servers in the TOML config; expose their tools through the registry with a default risk tier of `exec` (always ask) unless configured otherwise.
 - **Done when:** a test MCP server (stdio) is listed, called, and its result returned to the model.
 
-### T10 Plugin loading: `todo`
+### ✅ T10 Plugin loading: `done`
 - Load tools from a per-user tools directory and from Python entry points.
 - **Done when:** a sample plugin is loaded in tests; adding a tool is one decorated function plus a test.
 
@@ -310,3 +310,36 @@ Findings from **verify** items and follow-ups go here, by task id.
     - Third-party servers are not verified; only the two test servers were run.
     - The stderr temp file is not capped while a server runs, so a server that writes a lot grows it. Truncating it safely is a follow-up.
     - Nested object fields are not sent to the model (see above).
+
+**T10**
+- **Sources and order (decided):** built-in tools (registered on import), then the `*.py` files directly in the plugin folder (name order), then entry points in group `local_agent.tools` (name order), then MCP servers. `cli.run` calls `tools/plugins.py` `load_plugins` before MCP starts, and `PluginRuntime.close()` removes the plugin tools at exit, as for MCP.
+- **Plugin folder:** `plugin_dir` in the config, default `<config folder>\tools` (`config.default_plugin_dir`). Not created by the app; a missing folder means no plugins and no warning. Not recursive; names starting with `_` are skipped.
+- **File plugins:** run as module `local_agent_plugins.<stem>`. The source is compiled and executed directly, so no `.pyc` is written into the user's folder and an edited file is always the one that runs.
+- **Entry point rule (decided):** the value must name a module; importing it registers its tools. `module:attr` is refused before anything is imported, with a warning (a function could be a tool itself). A module already imported by other code in the process is not run again, so it registers nothing; the loader warns when a plugin registers no tools.
+- **Refusal has no side effects (S1, found by the review and fixed):** the first version imported `module:attr` before refusing it. The rollback removed its tools but left the module in `sys.modules`, so a second valid entry point on the same module loaded "0 tools" silently. Now the check comes first. Test: two entry points on one module, the attr form refused and the module form loads.
+- **Reloading in one process (S2, found by the review and fixed):** the modules the loader imports (plugin modules, `local_agent_plugins.` helpers, and the new modules of an entry point's top-level package) are recorded. `close()` and a rollback remove them from `sys.modules`, so a later load runs them again. Before, load, close, load gave "0 tools" with no warning.
+- **Zero tools:** a plugin that loads with no tools gets `Warning: plugin 'x' registered no tools.` and is left out of the `[plugins] loaded` line.
+- **Helper files (S3):** a file starting with `_` is not a plugin, but a plugin can `from . import _helper`. Each file-plugin load installs a stub package `local_agent_plugins` (`__path__` = the plugin folder), replacing any stale one, so two folders in one process do not share helpers. `sys.dont_write_bytecode` is set while file plugins load, so helpers write no `__pycache__` into the user's folder. `close()` removes the stub. The README documents the rule.
+- **Disabled names (N1):** `disabled_plugins` matches case-insensitively (casefold). One name is checked against both file stems and entry point names; the README says so.
+- **Ctrl+C and cleanup (N2):** `cli.run` loads plugins inside its try. A KeyboardInterrupt during plugin import or MCP start returns without a traceback. `load_plugins` closes what it loaded before re-raising, and the `finally` closes plugins and MCP even if `start_mcp_servers` raises.
+- **All or nothing per plugin:** any exception (syntax error, import error, invalid tool, or a raise after some `@tool`s) removes the tools that plugin added (registry key diff) and prints one warning. A name collision does not fail the plugin: `registry.skip_name_collisions()` makes a `@tool` whose name is taken skip it and report it, so the plugin's other tools still load. Outside plugin loading the registry still raises `ValueError` on a duplicate.
+- **Risk (decided):** `@tool` already has no default for `risk` (it is a required keyword), so a plugin tool without one fails to load with a warning. No default to `exec` or `read`: an omitted tier would be a guess.
+- **Profiles, approvals, sandbox:** unchanged, because plugin tools go through the same loop. A plugin's `paths=("path",)` gets the same workspace check (tested with an outside file).
+- **Self-modification guard:** `ToolContext.plugin_dir` (set by the loop from the settings). `sandbox.session_allowance_ok(path, plugin_dir=)` returns False for a path in the plugin folder, the same mechanism as `.git`. `write_file` and `edit_file` pass a hook that reads it from the context. Effects: a write or edit into the folder always asks, never offers "allow for this session", and a stored allowance is not used (the loop checks `session_allowed_for` before `session.allows`). Tests: `test_plugins.py`, the guard section.
+- **Config:** `plugins_enabled` (bool, default true), `disabled_plugins` (list of names, by file stem or entry point name), `plugin_dir` (a path that need not exist; a relative one is taken from the config file's folder). Flag `--no-plugins`. Bad values are `ConfigError`s that name the key.
+- **Output:** `[plugins] loaded: name (N tools), ...` only when a plugin loaded. Warnings: `Warning: plugin 'x' was not loaded (Error: ...). The agent continues without it.` and `... tool 'y' was skipped: ...`. Names and error text go through `printable`.
+- **Public API:** `local_agent/plugin.py` re-exports `tool`, `Risk`, `ToolContext`, `ToolCancelled` and `Preview`. The README example (one function, `count_words`) was run in a scratch folder: it loads and returns `3 words`. Its test now checks only its own plugin (`word_count`), so an unrelated broken installed entry point does not fail it. Run again in the scratchpad after the review fixes (the README file and test as written): passed.
+- **Tests:** `tests/test_plugins.py` (sample files in `tests/plugin_fixtures/`, renamed from `tests/plugins/` so the name is unlikely to clash). `tests/conftest.py` has an autouse fixture `isolated_plugins`: the per-user plugin folder points at a missing temp path, the `local_agent.tools` entry points are empty, and afterwards the registry is restored and the `local_agent_plugins` stub and its `local_agent_plugins.*` modules and the `plugin_fixtures.*` modules are removed from `sys.modules`.
+- **Verified:** `uv run pytest -q` gives 682 passed, 1 skipped (669 before the review fixes plus 13). `uv lock --check` exits 0. pyflakes was not run on the final change (the lint check was denied in this session).
+- **Verified by the reviewer:** loading from a real installed wheel with entry points (built with `uv pip install --target` in a scratch folder, put on PYTHONPATH). This is what found S1 and S2 above, both fixed and tested.
+- **Not verified:** plugins in the real `%APPDATA%` folder. A live model calling a plugin tool (the tests use the fake client). A real console Ctrl+C during a plugin tool (the plugin tools are not cancelled by the loop; see follow-ups). Ctrl+C during plugin import is tested with an injected `KeyboardInterrupt` only.
+- **Follow-ups:**
+  - Plugins are trusted code: they run in the agent's process with full access, and nothing sandboxes them. The folder is the trust boundary, so the README says to put only code you would run yourself there.
+  - `run_command` can still write into the plugin folder (it always asks, but the question is about the command, not the folder). A stricter rule would need parsing commands, which the sandbox does not do.
+  - No reload: plugins are read once at startup. A changed plugin needs a restart.
+  - A long plugin tool stops early only if it checks `context.cancel`, or if Ctrl+C raises `KeyboardInterrupt` inside it. The loop does not time plugin tools out (MCP calls and run_command have a limit; plugin tools have none yet).
+  - Argument types are not validated against the schema (the T02 hardening note applies to plugin tools as well).
+  - An entry point whose module was imported earlier by other code registers nothing. It gets the same "registered no tools" warning as a plugin with no tools; the loader cannot tell the two apart.
+  - Rollback and `close()` undo only registry key additions. Overwrites, deletions, mutated `Tool` members, monkeypatches and threads are not undone. Plugins are trusted code, so this only guards against accidents.
+  - Tools registered by a package that a file plugin imports (or by a module that package imports) are attributed to that file plugin: its rollback removes them, and the loaded line counts them under it.
+  - Modules a plugin imports itself, other than the loader's own (the plugin files, `local_agent_plugins.` helpers, and the entry point's top-level package), stay in `sys.modules` after `close()`. A second load in the same process therefore does not register their tools again. Removing them safely needs a rule for stdlib and third-party modules.

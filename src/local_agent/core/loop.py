@@ -34,7 +34,7 @@ from typing import Any, Protocol
 import ollama
 
 from local_agent import sandbox, tools
-from local_agent.config import Settings
+from local_agent.config import Settings, plugin_dir_of
 from local_agent.core.events import (
     ApprovalRequest,
     Decision,
@@ -151,7 +151,8 @@ def _run_rounds(
                                workspace=settings.workspace,
                                test_command=settings.test_command,
                                network_timeout_s=settings.network_timeout_s,
-                               cancel=cancel)
+                               cancel=cancel,
+                               plugin_dir=plugin_dir_of(settings))
     # The tools offered this turn (by the profile and the network switch). Calls to others are refused.
     offered = profiles.offered_tools(tools.TOOLS, settings)
     for round_no in range(1, settings.max_tool_rounds + 1):

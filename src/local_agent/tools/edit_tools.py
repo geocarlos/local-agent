@@ -22,7 +22,7 @@ from typing import Annotated
 from local_agent import sandbox
 from local_agent.core.events import Preview
 from local_agent.permissions import Risk
-from local_agent.tools.registry import tool
+from local_agent.tools.registry import ToolContext, tool
 
 MAX_PREVIEW_CHARS = 1500  # How much of a diff or proposed content the approval shows
 MAX_LISTED_MATCHES = 5    # Line numbers of ambiguous matches named in the error
@@ -178,13 +178,18 @@ def _edit_precheck(path: str, old_text: str, new_text: str) -> str | None:
     return None
 
 
+def _allow_always(path: str, context: ToolContext, **_: object) -> bool:
+    """Whether "allow for this session" is offered for this edit (see sandbox.session_allowance_ok)."""
+    return sandbox.session_allowance_ok(path, plugin_dir=context.plugin_dir)
+
+
 @tool(
     risk=Risk.WRITE,
     denied_message="User denied file edit.",
     approval_title=_edit_title,
     preview=_edit_preview,
     precheck=_edit_precheck,
-    allow_always=sandbox.session_allowance_ok,
+    allow_always=_allow_always,
     paths=("path",),
 )
 def edit_file(

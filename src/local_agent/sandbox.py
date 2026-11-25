@@ -112,13 +112,24 @@ def is_git_path(path: str) -> bool:
     return any(part.casefold() == ".git" for part in Path(path).parts)
 
 
-def session_allowance_ok(path: str, **_: object) -> bool:
-    """The `allow_always` hook of a tool that writes one file: never for a path under .git (hooks, config).
+def is_plugin_path(path: str, plugin_dir: Path) -> bool:
+    """True if the (resolved) path is the plugin folder or a path below it."""
+    return _is_inside(path, _without_verbatim(os.path.realpath(plugin_dir)))
 
-    Such a write asks every time and is never offered "allow for this session". Keyword arguments
-    other than `path` are ignored, so the hook fits any tool whose path argument is named `path`.
+
+def session_allowance_ok(path: str, plugin_dir: Path | None = None, **_: object) -> bool:
+    """The `allow_always` hook of a tool that writes one file.
+
+    Never for a path under .git (hooks, config), and never for a path in the plugin folder: a plugin
+    is code the agent would load next start, so such a write asks every time and is never offered
+    "allow for this session" (the same mechanism as .git). Keyword arguments other than `path` and
+    `plugin_dir` are ignored, so the hook fits any tool whose path argument is named `path`.
     """
-    return not is_git_path(path)
+    if is_git_path(path):
+        return False
+    if plugin_dir is not None and is_plugin_path(path, plugin_dir):
+        return False
+    return True
 
 
 def outside_request(
