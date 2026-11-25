@@ -5,6 +5,8 @@ connection is one the server closes before accepting it, so the client sees WebS
 """
 
 import json
+import socket
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from local_agent.config import Settings
 from local_agent.frontends import web
 
 PORT = 8765
+TIMEOUT_S = 5
 TOKEN = "test-token-abc_123"
 GOOD_ORIGINS = [f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"]
 
@@ -229,5 +232,44 @@ def test_binding_is_loopback_and_port_zero_picks_a_free_port():
         host, port = sock.getsockname()
         assert host == "127.0.0.1"
         assert port > 0
+    finally:
+        sock.close()
+
+
+def test_a_disconnect_during_a_permission_wait_cancels_the_turn_and_frees_the_thread(tmp_path):
+    threads: list = []
+    client = FakeOllama([tool_reply(("write_file", {"path": "out.txt", "content": "must not be written"})),
+                         text_reply("unused")])
+    app = web.create_app(Settings(workspace=tmp_path), token=TOKEN, port=PORT, client=client,
+                         log=lambda line: None, threads=threads)
+    with TestClient(app) as http:
+        with http.websocket_connect(f"/ws?token={TOKEN}") as ws:
+            s = _Socket(ws)
+            s.read_until(s.request("initialize", {"protocolVersion": 1}))
+            session_id = s.read_until(s.request("session/new", {"cwd": str(tmp_path), "mcpServers": []}))[-1][
+                "result"]["sessionId"]
+            s.request("session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": "write"}]})
+            while s.read().get("method") != "session/request_permission":
+                pass
+            # leave without answering: the client is gone while the turn waits for its approval
+    assert threads, "a connection thread was started"
+    for thread in threads:
+        thread.join(TIMEOUT_S)
+        assert not thread.is_alive(), "the connection thread did not end after the disconnect"
+    assert not (tmp_path / "out.txt").exists(), "the cancelled write must not run"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="SO_EXCLUSIVEADDRUSE is a Windows option")
+def test_a_fixed_port_cannot_be_taken_by_another_socket():
+    sock = web.bind_loopback(0)
+    try:
+        port = sock.getsockname()[1]
+        other = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        other.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # the setting that lets Windows share a port
+        try:
+            with pytest.raises(OSError):
+                other.bind(("127.0.0.1", port))
+        finally:
+            other.close()
     finally:
         sock.close()

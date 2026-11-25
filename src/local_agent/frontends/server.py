@@ -87,6 +87,10 @@ MAX_LINE_CHARS = 16 * 1024 * 1024
 OVERSIZE_LINE = object()
 
 
+class TransportClosed(ValueError):
+    """The writer cannot send any more: the client connection has closed. The server logs it and stops sending."""
+
+
 class ProtocolError(Exception):
     """A request that cannot be answered as asked. Becomes a JSON-RPC error response."""
 
@@ -479,6 +483,9 @@ class StdioServer:
             try:
                 self._writer.write(line)
                 self._writer.flush()
+            except TransportClosed as e:  # the WebSocket connection closed (web transport)
+                self._writes_failed = True
+                self._log(f"Warning: the client connection closed; no more messages are sent ({e}).")
             except (OSError, ValueError) as e:  # the client has gone away: nothing more can be sent
                 self._writes_failed = True
                 self._log(f"Warning: cannot write to stdout ({type(e).__name__}: {e}); no more messages are sent.")

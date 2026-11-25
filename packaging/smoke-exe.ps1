@@ -4,9 +4,13 @@
 # 2. `serve --stdio` starts with a temp plugin folder holding packaging\smoke\smoke_stdlib.py. Stdin is empty,
 #    so the server gets EOF at once and must exit 0 after loading the plugins.
 # 3. The plugin's results file says which standard-library modules import inside the frozen app.
-#    REQUIRED modules are the ones packaging\local-agent.spec lists in hiddenimports (sqlite3 included): a failure
-#    fails this script. OPTIONAL modules (ctypes, bz2, lzma) are reported as warnings only: the build does not
-#    promise them yet (see README, "Standard-library DLLs").
+#    REQUIRED modules are the ones packaging\local-agent.spec lists in hiddenimports (sqlite3 included), plus
+#    ctypes, which the app itself needs: click, a dependency of uvicorn, imports it for `serve --web`. A failure
+#    fails this script. OPTIONAL modules (bz2, lzma) are reported as warnings only: the build does not promise
+#    them yet (see README, "Standard-library DLLs").
+# 4. `serve --web` starts on 127.0.0.1 with a temp empty config and an unreachable Ollama. The script waits
+#    (90 s at most) for the `WebSocket: ws://127.0.0.1:PORT/...` line on stderr, checks that GET / answers 200,
+#    then stops that process by its own handle. A failure here means the WebSocket stack did not load in the exe.
 #
 # Usage: packaging\smoke-exe.ps1 [-Exe <path>]   (default: dist\local-agent\local-agent.exe under the repo root)
 
@@ -20,8 +24,8 @@ if (-not $Exe) { $Exe = Join-Path $Root "dist\local-agent\local-agent.exe" }
 if (-not (Test-Path $Exe)) { throw "No exe at $Exe. Run packaging\build.ps1 first." }
 $Exe = (Resolve-Path $Exe).Path
 
-$Required = @("sqlite3", "xml.etree.ElementTree", "xml.dom.minidom", "csv", "decimal", "zipfile", "unittest")
-$Optional = @("ctypes", "bz2", "lzma")
+$Required = @("sqlite3", "xml.etree.ElementTree", "xml.dom.minidom", "csv", "decimal", "zipfile", "unittest", "ctypes")
+$Optional = @("bz2", "lzma")
 
 $Work = Join-Path ([System.IO.Path]::GetTempPath()) ("local-agent-smoke-" + [guid]::NewGuid().ToString("N"))
 $PluginDir = Join-Path $Work "plugins"
@@ -83,6 +87,38 @@ if (-not (Test-Path $Results)) {
         }
     }
 }
+
+# 4. serve --web: the WebSocket stack (uvicorn, websockets, click through uvicorn) must import and listen.
+$WebConfig = Join-Path $Work "web-config.toml"
+New-Item -ItemType File -Path $WebConfig -Force | Out-Null  # empty: the user's own config is never read
+$WebOut = Join-Path $Work "web-out.txt"
+$WebErr = Join-Path $Work "web-err.txt"
+$Web = Start-Process -FilePath $Exe -PassThru -NoNewWindow -WorkingDirectory $Work `
+    -ArgumentList @("serve", "--web", "--port", "0", "--no-plugins", "--cwd", $Work, "--config", $WebConfig, "--host", "http://127.0.0.1:1") `
+    -RedirectStandardInput $Empty -RedirectStandardOutput $WebOut -RedirectStandardError $WebErr
+$WebPort = $null
+$WebText = ""
+$Deadline = (Get-Date).AddSeconds(90)
+while (-not $WebPort -and -not $Web.HasExited -and (Get-Date) -lt $Deadline) {
+    Start-Sleep -Milliseconds 250
+    $WebText = (Get-Content $WebErr -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content $WebOut -Raw -ErrorAction SilentlyContinue)
+    if ($WebText -match 'WebSocket: ws://127\.0\.0\.1:(\d+)/ws\?token=') { $WebPort = $Matches[1] }
+}
+if (-not $WebPort) {
+    if ($Web.HasExited) { $Failures += "serve --web: exit $($Web.ExitCode) before it listened (log: $WebText)" }
+    else { $Failures += "serve --web: no WebSocket line on stderr within 90 s (log: $WebText)" }
+} else {
+    try {
+        $Page = Invoke-WebRequest -Uri "http://127.0.0.1:$WebPort/" -UseBasicParsing -TimeoutSec 15
+        if ($Page.StatusCode -eq 200) { Write-Host "serve --web: listening on port $WebPort, GET / ok" }
+        else { $Failures += "serve --web: GET / returned $($Page.StatusCode)" }
+    } catch {
+        $Failures += "serve --web: GET / failed: $($_.Exception.Message)"
+    }
+}
+# Stop only the process this script started, through its own handle.
+if (-not $Web.HasExited) { $Web.Kill() }
+$Web.WaitForExit(30000) | Out-Null
 
 Write-Host "Module results (plugin imports in the frozen app):"
 $Report | ForEach-Object { Write-Host $_ }

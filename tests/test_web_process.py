@@ -83,3 +83,25 @@ def test_the_web_server_refuses_bad_clients_and_serves_a_real_client(tmp_path):
         proc.stderr.close()
 
     assert not any(token in line for line in lines if "WebSocket:" not in line), "the token is printed only in the URL"
+
+
+def test_a_line_over_the_character_limit_gets_32600_and_the_socket_stays_open(tmp_path):
+    from local_agent.frontends.server import MAX_LINE_CHARS
+
+    proc, port, token, lines, watchdog, reader = _start(tmp_path)
+    try:
+        with connect(f"ws://127.0.0.1:{port}/ws?token={token}", origin=f"http://127.0.0.1:{port}",
+                     open_timeout=TIMEOUT_S, max_size=None) as ws:
+            # One frame of MAX_LINE_CHARS + 1 ASCII characters: the transport accepts it, the server refuses the line.
+            ws.send("x" * (MAX_LINE_CHARS + 1))
+            answer = json.loads(ws.recv(timeout=TIMEOUT_S))
+            assert answer["error"]["code"] == -32600 and answer["id"] is None
+            ws.send(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": 1}}))
+            assert json.loads(ws.recv(timeout=TIMEOUT_S))["id"] == 2
+    finally:
+        watchdog.cancel()
+        proc.kill()
+        proc.wait(timeout=TIMEOUT_S)
+        reader.join(TIMEOUT_S)
+        proc.stdout.close()
+        proc.stderr.close()

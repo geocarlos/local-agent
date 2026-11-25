@@ -43,6 +43,10 @@ WS_PATH = "/ws"
 TOKEN_PARAM = "token"
 WS_POLICY_VIOLATION = 1008  # the close code sent (before accept) when a connection is refused
 LISTEN_BACKLOG = 16
+# The largest WebSocket message the transport accepts, in UTF-8 bytes. A line of MAX_LINE_CHARS characters
+# is at most 4 bytes per character, so every such line reaches the server, which answers -32600 when it is
+# longer than the character limit. A larger message is closed by the WebSocket layer (code 1009).
+WS_MAX_MESSAGE_BYTES = 4 * acp.MAX_LINE_CHARS
 
 
 def new_token() -> str:
@@ -92,11 +96,11 @@ class _FrameWriter:
         line = text[:-1] if text.endswith("\n") else text
         with self._lock:
             if self._closed:
-                raise ValueError("the connection is closed")
+                raise acp.TransportClosed("the WebSocket connection is closed")
             try:
                 self._loop.call_soon_threadsafe(self._outbox.put_nowait, line)
-            except RuntimeError:  # the event loop has stopped
-                raise ValueError("the event loop is closed") from None
+            except RuntimeError:  # the event loop has stopped: the server has shut down
+                raise acp.TransportClosed("the server is shutting down") from None
         return len(text)
 
     def flush(self) -> None:
@@ -197,6 +201,10 @@ def bind_loopback(port: int) -> socket.socket:
     """A listening socket on 127.0.0.1. Port 0 takes a free port from the system."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        if sys.platform == "win32":
+            # Without this, another process may bind the same port (Windows allows it for sockets that set
+            # SO_REUSEADDR). Exclusive use makes a fixed --port fail loudly instead.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         sock.bind(("127.0.0.1", port))
         sock.listen(LISTEN_BACKLOG)
     except OSError:
@@ -228,7 +236,8 @@ def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: 
         client = ollama.Client(host=settings.host)
     threads: list[threading.Thread] = []
     app = create_app(settings, token=token, port=bound_port, client=client, log=log, threads=threads)
-    config = uvicorn.Config(app, ws="websockets", access_log=False, log_level="warning", lifespan="off")
+    config = uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES, access_log=False,
+                            log_level="warning", lifespan="off")
     uv_server = uvicorn.Server(config)
     try:
         with contextlib.redirect_stdout(errors), acp.running_agent(settings, client=client, log=log):
