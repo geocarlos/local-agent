@@ -367,11 +367,17 @@ tests/
   test_plugins.py      # plugin folder and entry points, failure isolation and rollback, name clashes, risk, switches, the plugin-folder write guard
   plugins/             # sample plugin files used by test_plugins.py (sample_plugin.py, entry_sample.py)
   test_frozen_exe.py   # the built local-agent.exe: --help and serve --stdio initialize; skipped unless the exe is built
+  test_release_workflow.py  # release.yml read as YAML: triggers, permissions, tag check, pinned actions
 packaging/
   build.ps1            # builds dist\local-agent\local-agent.exe (uv sync --locked, then PyInstaller)
   local-agent.spec     # PyInstaller spec: --onedir, console app, hidden imports and package metadata
   launcher.py          # the script PyInstaller freezes; calls the same main() as the local-agent script
-.github/workflows/ci.yml  # pytest on windows-latest
+  smoke-exe.ps1        # smoke test of the built exe: --help, a serve --stdio run with a smoke plugin, standard-library imports
+  smoke/smoke_stdlib.py  # the plugin smoke-exe.ps1 copies into a temp folder
+  local-agent.iss      # Inno Setup 6 script for the installer; build-installer.ps1 compiles it
+  build-installer.ps1  # builds dist\installer\local-agent-<version>-setup.exe
+.github/workflows/ci.yml       # pytest on windows-latest, every push to main and every pull request
+.github/workflows/release.yml  # build, test and package on windows-latest; publishes a GitHub Release for version tags
 ```
 
 ## Architecture
@@ -458,6 +464,40 @@ winget install --id JRSoftware.InnoSetup -e
 ```powershell
 packaging\build-installer.ps1
 ```
+
+## Releasing
+
+A release is a version tag. `.github/workflows/release.yml` runs on `windows-latest`, builds `local-agent.exe` and the installer, and attaches them to a GitHub Release.
+
+1. Set `version` in `pyproject.toml` (for example `0.2.0`) and merge it to `main`.
+2. Tag that commit as `v` plus the version, and push the tag:
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+   The tag must equal the `pyproject.toml` version exactly (`v0.2.0` for `0.2.0`). If it does not, the build stops at the "Read the version and check the tag" step and nothing is published.
+3. The workflow runs the tests, builds `dist\local-agent\`, runs the frozen-exe tests and `packaging\smoke-exe.ps1`, builds the installer, and then creates the release.
+
+The release has three files:
+
+- `local-agent-<version>-setup.exe`: the machine-wide installer (see "Building the installer").
+- `local-agent-<version>-win-x64.zip`: the app folder, unzipped to `local-agent-<version>-win-x64\` with `local-agent.exe` and `_internal\`. Nothing is installed; run the exe from any folder.
+- `SHA256SUMS.txt`: the SHA-256 of both files, in `sha256sum` format. To check a download in Git Bash, run `sha256sum -c SHA256SUMS.txt` in the folder that holds the files. In PowerShell, compare `Get-FileHash <file> -Algorithm SHA256` with the line for that file.
+
+A tag with a suffix, such as `v0.2.0-rc1`, becomes a pre-release. Its `pyproject.toml` version must be the same suffixed string.
+
+**Dry runs (no release, no tag):**
+
+- Open a pull request that changes `packaging/**`, `.github/workflows/release.yml`, `pyproject.toml` or `uv.lock`. The workflow builds, tests and uploads the files as the run's artifact `local-agent-release-<version>` (kept 14 days). The tag check is skipped.
+- Or run the workflow by hand: Actions, Release, Run workflow. It does the same and never publishes, even if the branch selected is a tag.
+
+**Build details:**
+
+- Python is a uv-managed Python 3.14 (`UV_PYTHON_PREFERENCE=only-managed`), installed by `uv python install 3.14`. The runner's own Python and conda are not used.
+- Inno Setup 6.7.1 is installed with Chocolatey only when the runner does not already have `ISCC.exe` in one of the places `build-installer.ps1` looks.
+- Nothing is signed. Windows SmartScreen may warn about the installer and the exe.
+
+**If a tag build fails:** a failure before the publish job leaves no release. Fix the problem, then either push a new version or delete the tag (`git push --delete origin v0.2.0`, `git tag -d v0.2.0`) and push it again. If the publish job created the release, delete the release on GitHub first.
 
 ## Development
 
