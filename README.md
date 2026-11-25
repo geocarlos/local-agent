@@ -318,6 +318,11 @@ tests/
   test_cli_mcp.py      # REPL with MCP servers: start-up warnings, argument preview, stop at exit and at Ctrl+C
   test_plugins.py      # plugin folder and entry points, failure isolation and rollback, name clashes, risk, switches, the plugin-folder write guard
   plugins/             # sample plugin files used by test_plugins.py (sample_plugin.py, entry_sample.py)
+  test_frozen_exe.py   # the built local-agent.exe: --help and serve --stdio initialize; skipped unless the exe is built
+packaging/
+  build.ps1            # builds dist\local-agent\local-agent.exe (uv sync --locked, then PyInstaller)
+  local-agent.spec     # PyInstaller spec: --onedir, console app, hidden imports and package metadata
+  launcher.py          # the script PyInstaller freezes; calls the same main() as the local-agent script
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
 
@@ -363,10 +368,39 @@ def count_lines(path: Annotated[str, "File to count"]) -> str:
 - Tools must not `print` or call `input`. Return a string; raised exceptions go back to the model as an error message.
 - Add a test next to `tests/test_registry.py` or `tests/test_approval.py` that checks the schema and, for risky tools, the approval flow.
 
+## Building the Windows executable
+
+`packaging\build.ps1` builds `local-agent.exe` with PyInstaller, in `--onedir` mode. Run it from the repo root (or from anywhere). Close any running `local-agent` that was started from the repo's venv (`.venv\Scripts\local-agent.exe`) first: Windows locks it, and the build's `uv sync` then fails with "being used by another process".
+
+```powershell
+packaging\build.ps1
+```
+
+With Windows PowerShell 5.1 and a restrictive execution policy, run it with the policy bypassed for that one script (pwsh 7 runs the line above directly):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+It runs `uv sync --locked`, then PyInstaller with `packaging\local-agent.spec`. The output is the folder `dist\local-agent\`: `local-agent.exe` and an `_internal` folder beside it. Copy that whole folder to run the app elsewhere; the exe needs no Python to run. `build\` is PyInstaller's work folder and can be deleted. Both `build\` and `dist\` are git-ignored.
+
+- **Size (T12, this machine):** 46.4 MiB in 212 files (48,661,837 bytes), after adding the standard-library modules below.
+- **Python version:** PyInstaller 6.22.3 (a dev dependency) declares Python 3.14 support and builds on the project's Python 3.14, so `requires-python` is unchanged.
+- **Tests against the exe:** `$env:LOCAL_AGENT_EXE = "dist\local-agent\local-agent.exe"; uv run pytest tests\test_frozen_exe.py`. Without an exe, that file is skipped; a plain `uv run pytest` never builds anything.
+
+Limitations of the built app:
+
+- **Entry-point plugins are not loaded.** A package installed with a `local_agent.tools` entry point cannot be added to the frozen app. The loader finds none and prints nothing. **File plugins still load:** a `*.py` file in the tools folder can `from local_agent.plugin import tool` and use the standard-library modules bundled in the app. The build lists these extra ones in `hiddenimports` (`packaging\local-agent.spec`): `sqlite3`, `xml.etree.ElementTree`, `xml.dom.minidom`, `unittest`, `csv`, `decimal` and `zipfile`. Other standard-library modules are not guaranteed: a module the build does not bundle fails with a clear per-plugin warning, and the agent runs on without that plugin. Pure-Python modules are sometimes in the bundle without being listed (`colorsys` loaded in the check below), so add a module to `hiddenimports` before relying on it. `tkinter` is excluded. A package that is not standard library (a plugin importing `rich`, for example) is refused with a `ModuleNotFoundError` warning in the same way.
+- **Standard-library DLLs on the build machine.** The build machine's base Python is miniforge/conda (`C:\ProgramData\miniforge3`). Its DLLs for `_ctypes` (`ffi-8.dll`), `_bz2` (`libbz2.dll`), `_lzma` (`liblzma.dll`) and `_sqlite3` (`sqlite3.dll`) are in its `Library\bin` folder, which PyInstaller does not collect here (the build log reports `Library not found`). So on this build, plugins that import `ctypes`, `bz2`, `lzma` or `sqlite3` fail with a warning, even though `sqlite3` is in the list above. A build on a python.org or uv-managed Python (T14 CI) may differ; that is not verified.
+- **MCP servers run the program they name.** `command` is looked up on PATH, so a Python MCP server needs a Python of its own; the exe does not provide one.
+- **Ollama is not included.** It must run as before (see Requirements).
+- **Not signed.** Windows SmartScreen and Defender may warn about an unsigned executable.
+- **State stays per user.** Config, plugins and temp files go to the per-user folders (`%APPDATA%\local-agent`, the system temp folder for MCP stderr). Nothing is written next to the exe.
+
 ## Development
 
 ```sh
-uv sync          # installs runtime and dev dependencies (pytest)
+uv sync          # installs runtime and dev dependencies (pytest, pyinstaller)
 uv run pytest    # runs the tests; no Ollama needed
 ```
 

@@ -1,5 +1,8 @@
 """Terminal frontend: y/n approver and event rendering. `input` is monkeypatched."""
 
+import subprocess
+import sys
+
 import httpx
 import ollama
 import pytest
@@ -363,3 +366,61 @@ def test_repl_a_allows_the_same_tool_for_the_rest_of_the_session(fake_ollama, mo
     assert first.read_text(encoding="utf-8") == "1"
     assert second.read_text(encoding="utf-8") == "2"
     assert "Agent: two saved" in capsys.readouterr().out
+
+
+def test_eof_at_an_approval_refuses_the_tool(monkeypatch):
+    def no_input(prompt=""):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_input)
+
+    assert cli.TerminalApprover().decide(request_for()) is Decision.REJECT_ONCE
+
+
+def test_eof_at_an_approval_refuses_the_tool_then_the_repl_exits(fake_ollama, monkeypatch, workspace, capsys):
+    target = workspace / "a.txt"
+    answers = iter(["write it"])  # then the input ends: the approval gets EOF, the next prompt gets EOF
+
+    def fake_input(prompt=""):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    client = fake_ollama([
+        tool_reply(("write_file", {"path": str(target), "content": "hi"})),
+        text_reply("I did not write it"),
+    ])
+
+    cli.run(client=client)  # no EOFError escapes
+
+    assert not target.exists()
+    assert client.calls[1]["messages"][-1] == {
+        "role": "tool", "content": "User denied file write.", "tool_name": "write_file"
+    }
+    assert "Agent: I did not write it" in capsys.readouterr().out
+
+
+def test_eof_at_the_prompt_exits_cleanly(fake_ollama, monkeypatch, capsys):
+    def no_input(prompt=""):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_input)
+
+    cli.run(client=fake_ollama([]))  # no EOFError escapes
+
+    assert f"Local Agent ready ({DEFAULT_MODEL})" in capsys.readouterr().out
+
+
+def test_piped_empty_stdin_exits_zero_without_a_traceback(tmp_path):
+    """The source build, as the exe does: stdin ends at once, so the REPL ends with exit 0."""
+    code = ("from local_agent.config import Settings\n"
+            "from local_agent.frontends import cli\n"
+            "cli.run(settings=Settings(plugins_enabled=False, host='http://127.0.0.1:1'))\n")
+    result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, input="", capture_output=True,
+                            text=True, encoding="utf-8", timeout=120)
+
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Local Agent ready" in result.stdout
