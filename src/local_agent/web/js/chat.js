@@ -5,6 +5,11 @@
 // shown as plain text, with its line breaks kept.
 
 const APPROVE_KINDS = new Set(["allow_once", "allow_always"]);
+const TOOL_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
+// The most output text a tool card keeps in the page. The end of a long output is kept, with a marker.
+export const MAX_OUTPUT_CHARS = 20000;
+// The end of a preview that the agent cut (cap_preview adds "...[N more chars]").
+const TRUNCATED_PREVIEW = /\n\.\.\.\[\d+ more chars\]$/;
 
 const STOP_LABELS = {
   end_turn: "Done.",
@@ -55,8 +60,10 @@ export function previewElement(preview) {
     label = `Proposed changes${path}`;
   } else if (preview.kind === "command") {
     label = `Command (${preview.shell || "shell"})`;
-  } else {
+  } else if (preview.kind === "text" && preview.path) {
     label = `Proposed content${path}`;
+  } else {
+    label = "Preview"; // a tool's arguments or a fetch: no file is named
   }
   wrap.append(el("span", "label", label));
   const block = el("pre", "code");
@@ -68,6 +75,9 @@ export function previewElement(preview) {
     block.textContent = preview.text;
   }
   wrap.append(block);
+  if (TRUNCATED_PREVIEW.test(preview.text)) {
+    wrap.append(el("p", "truncated", "Preview truncated: the rest of it is not shown. Read the details before you allow this."));
+  }
   return wrap;
 }
 
@@ -92,6 +102,7 @@ export class ChatView {
     this.approval = null;       // the resolver of the open approval dialog
     this.context = null;        // { used, size } from the last usage_update
     this.lastTurnTokens = null; // completion tokens of the last turn
+    this.dead = false;          // the link is gone: nothing can be sent, so the controls stay off
 
     this.dialog.addEventListener("cancel", (event) => {
       event.preventDefault(); // Esc refuses the call instead of closing the dialog silently
@@ -118,15 +129,19 @@ export class ChatView {
   }
 
   disconnected(reason) {
+    this.dead = true;
     this.setStatus("Disconnected", "bad");
     this.showNotice(`${reason} Reopen the address that local-agent printed, then try again.`);
-    this.setBusy(false);
     this.prompt.disabled = true;
     this.send.disabled = true;
+    this.cancel.disabled = true;
     this.closeApproval();
   }
 
   setBusy(busy) {
+    if (this.dead) {
+      return; // a late answer after a disconnect must not bring the controls back
+    }
     this.send.disabled = busy;
     this.prompt.disabled = busy;
     this.cancel.disabled = !busy;
@@ -178,6 +193,9 @@ export class ChatView {
 
   // A session/prompt answer: the turn is over.
   turnEnded(result) {
+    if (this.dead) {
+      return;
+    }
     const reason = result && result.stopReason;
     this.addSystem(STOP_LABELS[reason] || `Turn ended (${reason}).`);
     const tokens = result && result._meta && result._meta.usage;
@@ -186,7 +204,11 @@ export class ChatView {
     this.setBusy(false);
   }
 
+  // After a disconnect the disconnect notice already says what happened, so there is no second message.
   turnFailed(error) {
+    if (this.dead) {
+      return;
+    }
     this.addError(error && error.message ? error.message : String(error));
     this.setBusy(false);
   }
@@ -196,7 +218,8 @@ export class ChatView {
     this.closeApproval();
     const call = (params && params.toolCall) || {};
     this.approvalTitle.textContent = call.title || "Allow this tool call?";
-    this.approvalPreview.replaceChildren(previewElement(call.preview));
+    const meta = call._meta && call._meta.preview; // ACP's extension point, see docs/protocol.md
+    this.approvalPreview.replaceChildren(previewElement(meta));
     this.approvalOptions.replaceChildren();
     const options = Array.isArray(params && params.options) ? params.options : [];
     const outcome = new Promise((resolve) => {
@@ -283,7 +306,7 @@ export class ChatView {
     );
     const output = el("pre", "tool-output");
     card.append(head, output);
-    this.tools.set(id, { card, state: head.querySelector(".state"), output, status: "pending" });
+    this.tools.set(id, { card, state: head.querySelector(".state"), output, status: "pending", text: "" });
     this._append(card);
   }
 
@@ -292,15 +315,23 @@ export class ChatView {
     if (!tool) {
       return;
     }
-    if (update.status) {
+    if (TOOL_STATUSES.has(update.status)) {
       tool.status = update.status;
       tool.card.className = `tool status-${update.status}`;
       tool.state.textContent = update.status === "in_progress" ? "running" : update.status;
     }
+    let added = false;
     for (const item of Array.isArray(update.content) ? update.content : []) {
       if (item && item.type === "content" && item.content && typeof item.content.text === "string") {
-        tool.output.append(this.doc.createTextNode(item.content.text));
+        tool.text += item.content.text;
+        added = true;
       }
+    }
+    if (added) {
+      if (tool.text.length > MAX_OUTPUT_CHARS) {
+        tool.text = "...[earlier output not shown]\n" + tool.text.slice(-MAX_OUTPUT_CHARS);
+      }
+      tool.output.textContent = tool.text;
     }
   }
 

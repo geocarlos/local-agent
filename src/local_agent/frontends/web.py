@@ -73,6 +73,15 @@ def token_ok(presented: str | None, expected: str) -> bool:
     return hmac.compare_digest(presented.encode("utf-8", "replace"), expected.encode("utf-8"))
 
 
+def bearer_token(request: Request) -> str | None:
+    """The token of an `Authorization: Bearer` header, or None. The query parameter is not read (the /info route)."""
+    auth = request.headers.get("authorization")
+    if auth is None:
+        return None
+    scheme, _, value = auth.partition(" ")
+    return value.strip() if scheme.lower() == "bearer" else None
+
+
 def presented_token(request: Request | WebSocket) -> str | None:
     """The token a client sent: the Bearer header if there is an Authorization header, else the query parameter."""
     auth = request.headers.get("authorization")
@@ -182,7 +191,7 @@ def create_app(settings: Settings, *, token: str, port: int, client: Any,
     @app.get("/info")
     async def info(request: Request) -> Response:
         no_store = {**headers, "Cache-Control": "no-store"}
-        if not token_ok(presented_token(request), token):
+        if not token_ok(bearer_token(request), token):  # the header only: a query token would reach logs and history
             return JSONResponse({"error": "A valid token is needed."}, status_code=403, headers=no_store)
         return JSONResponse({"cwd": str(settings.workspace), "protocolVersion": acp.PROTOCOL_VERSION},
                             headers=no_store)

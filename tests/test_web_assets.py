@@ -108,16 +108,16 @@ def test_paths_outside_the_folder_or_unknown_are_404(client, path):
 def test_the_static_files_need_no_token_but_the_info_route_does(client):
     assert client.get("/style.css").status_code == 200
     assert client.get("/info").status_code == 403
-    assert client.get("/info?token=wrong").status_code == 403
     assert client.get("/info", headers={"Authorization": "Bearer wrong"}).status_code == 403
 
 
-def test_info_gives_the_workspace_with_the_token(client, tmp_path):
-    for response in [client.get("/info", headers={"Authorization": f"Bearer {TOKEN}"}),
-                     client.get(f"/info?token={TOKEN}")]:
-        assert response.status_code == 200
-        assert response.headers["cache-control"] == "no-store"
-        assert response.json() == {"cwd": str(tmp_path), "protocolVersion": 1}
+def test_info_takes_the_token_only_in_the_authorization_header(client, tmp_path):
+    # A token in the query would be written to logs and browser history, so /info does not read it.
+    assert client.get(f"/info?token={TOKEN}").status_code == 403
+    response = client.get("/info", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"cwd": str(tmp_path), "protocolVersion": 1}
 
 
 def test_the_websocket_still_needs_the_token(client):

@@ -3,7 +3,8 @@
 It answers the two routes the agent uses: `POST /api/show` (the capability probe at start-up) and `POST /api/chat`
 (streamed, one JSON object per line, as Ollama does). The script depends on the last message:
 
-- last message is a tool result: a reply that says the edit is done, streamed in pieces;
+- last message is a tool result: a reply that says the edit is done, streamed in pieces, or, when the
+  result says the call was denied, a reply that says it was not done;
 - last user message contains "EDIT": a call to edit_file that replaces "world" with "there" in hello.txt
   (relative paths resolve in the session's workspace);
 - anything else: a plain reply, streamed in pieces.
@@ -18,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 CAPABILITIES = ["completion", "tools"]
 PLAIN_REPLY = ["Hello ", "from the ", "scripted model."]
 DONE_REPLY = ["The edit is done: ", "hello.txt now says ", "Hello there."]
+DENIED_REPLY = ["I did not edit ", "hello.txt, ", "because the edit was refused."]
 
 
 def _line(obj: dict) -> bytes:
@@ -34,7 +36,7 @@ def script_for(messages: list[dict]) -> list[dict]:
     last = messages[-1] if messages else {}
     user_text = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
     if last.get("role") == "tool":
-        pieces = DONE_REPLY
+        pieces = DENIED_REPLY if "denied" in str(last.get("content", "")) else DONE_REPLY
         chunks = [_text_chunk(piece) for piece in pieces]
     elif "EDIT" in user_text:
         chunks = [{"model": "scripted", "created_at": "2026-01-01T00:00:00Z",

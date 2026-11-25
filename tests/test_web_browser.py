@@ -1,12 +1,19 @@
 """The web UI in a real browser (T16): Microsoft Edge, driven by Playwright, against a real `serve --web` process.
 
-The model is scripted (tests/fake_ollama_http.py). The test sends a plain prompt and sees its streamed reply,
-then asks for an edit, sees the approval dialog with the diff, allows it once, and checks that the file changed
-on disk and that the tool card completed.
+The model is scripted (tests/fake_ollama_http.py). Three cases:
+- an approved edit: a streamed reply, an approval dialog with the diff, allow once, the file changed on disk,
+  the tool card completed;
+- a rejected edit: the dialog, reject, the file unchanged, the card failed;
+- a server that dies mid-turn: the page says Disconnected, the controls stay off, and no second message appears.
 
-Skipped when Playwright is not installed or Edge cannot be launched (CI on windows-latest has Edge).
+The test starts every server it uses and stops it by its own process handle.
+
+Edge missing: the tests skip, when Playwright is installed and the error says the msedge channel is not found.
+Any other launch error fails the tests, and so does a missing Edge when the CI environment variable is set
+(CI on windows-latest has Edge, so a skip there would hide a real failure).
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -24,15 +31,23 @@ ORIGINAL = "Hello world\n"
 EDITED = "Hello there\n"
 
 
+def edge_not_installed(message: str) -> bool:
+    """True when Playwright says the msedge channel is not installed (and nothing else went wrong)."""
+    return re.search(r"msedge", message) is not None and re.search(
+        r"not found|doesn't exist|executable", message, re.IGNORECASE) is not None
+
+
 @pytest.fixture(scope="module")
 def edge():
-    """One Edge browser for the module. Skips the tests when Edge cannot be started."""
+    """One Edge browser for the module."""
     playwright = playwright_api.sync_playwright().start()
     try:
         browser = playwright.chromium.launch(channel="msedge", headless=True)
-    except Exception as error:  # Playwright raises a plain Error when the channel is missing
+    except Exception as error:
         playwright.stop()
-        pytest.skip(f"Microsoft Edge is not available to Playwright: {str(error).splitlines()[0][:200]}")
+        if os.environ.get("CI") or not edge_not_installed(str(error)):
+            raise
+        pytest.skip(f"Microsoft Edge is not installed: {str(error).splitlines()[0][:200]}")
     yield browser
     browser.close()
     playwright.stop()
@@ -40,7 +55,7 @@ def edge():
 
 @pytest.fixture
 def served(tmp_path):
-    """A real `serve --web` process with the scripted model, and the page URL it prints (with the token)."""
+    """A real `serve --web` process with the scripted model. Yields its page URL, workspace and process handle."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "hello.txt").write_text(ORIGINAL, encoding="utf-8")
@@ -70,7 +85,7 @@ def served(tmp_path):
     try:
         if not seen.wait(60):
             raise AssertionError("the server did not print its page URL: " + "\n".join(lines))
-        yield {"url": found["url"], "workspace": workspace}
+        yield {"url": found["url"], "workspace": workspace, "proc": proc}
     finally:
         proc.kill()  # our own process, by its handle
         proc.wait(timeout=30)
@@ -81,14 +96,26 @@ def served(tmp_path):
         fake.server_close()
 
 
-def test_a_chat_with_an_approved_edit_works_in_edge(edge, served):
+def open_connected(edge, served):
     page = edge.new_page()
-    console_errors: list[str] = []
-    page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+    errors: list[str] = []
+    page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+    page.goto(served["url"])
+    playwright_api.expect(page.locator("#status")).to_have_text("Connected", timeout=TIMEOUT_MS)
+    return page, errors
+
+
+def ask_for_edit(page):
+    page.fill("#prompt", "EDIT hello.txt")
+    page.click("#send")
+    dialog = page.locator("#approval")
+    playwright_api.expect(dialog).to_be_visible(timeout=TIMEOUT_MS)
+    return dialog
+
+
+def test_a_chat_with_an_approved_edit_works_in_edge(edge, served):
+    page, console_errors = open_connected(edge, served)
     try:
-        page.goto(served["url"])
-        status = page.locator("#status")
-        playwright_api.expect(status).to_have_text("Connected", timeout=TIMEOUT_MS)
         assert "token" not in page.url, "the token is removed from the address bar"
 
         # A plain turn: the reply is streamed into one agent message.
@@ -99,10 +126,7 @@ def test_a_chat_with_an_approved_edit_works_in_edge(edge, served):
         playwright_api.expect(page.locator("#send")).to_be_enabled(timeout=TIMEOUT_MS)
 
         # An edit: the approval dialog shows the diff, with the removed and the added line.
-        page.fill("#prompt", "EDIT hello.txt")
-        page.click("#send")
-        dialog = page.locator("#approval")
-        playwright_api.expect(dialog).to_be_visible(timeout=TIMEOUT_MS)
+        dialog = ask_for_edit(page)
         playwright_api.expect(page.locator("#approval-title")).to_contain_text("hello.txt")
         playwright_api.expect(page.locator("#approval-preview .line.del")).to_contain_text("world")
         playwright_api.expect(page.locator("#approval-preview .line.add")).to_contain_text("there")
@@ -122,3 +146,50 @@ def test_a_chat_with_an_approved_edit_works_in_edge(edge, served):
 
     assert (served["workspace"] / "hello.txt").read_text(encoding="utf-8") == EDITED
     assert not [e for e in console_errors if "Content Security Policy" in e], console_errors
+
+
+def test_a_rejected_edit_leaves_the_file_unchanged(edge, served):
+    page, console_errors = open_connected(edge, served)
+    try:
+        dialog = ask_for_edit(page)
+        page.locator("#approval-options button", has_text="Reject").click()
+        playwright_api.expect(dialog).to_be_hidden(timeout=TIMEOUT_MS)
+
+        playwright_api.expect(page.locator(".tool.status-failed")).to_have_count(1, timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator(".tool-output").first).to_contain_text("denied")
+        playwright_api.expect(page.locator("#chat")).to_contain_text("I did not edit", timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator("#send")).to_be_enabled(timeout=TIMEOUT_MS)
+    finally:
+        page.close()
+
+    assert (served["workspace"] / "hello.txt").read_text(encoding="utf-8") == ORIGINAL
+    assert not [e for e in console_errors if "Content Security Policy" in e], console_errors
+
+
+def test_a_server_that_dies_mid_turn_leaves_the_page_disconnected(edge, served):
+    page, _ = open_connected(edge, served)
+    try:
+        dialog = ask_for_edit(page)  # the turn is running: it waits for the answer
+        served["proc"].kill()        # the process this test started, by its handle
+        served["proc"].wait(timeout=30)
+
+        playwright_api.expect(page.locator("#status")).to_have_text("Disconnected", timeout=TIMEOUT_MS)
+        playwright_api.expect(dialog).to_be_hidden(timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator("#notice")).to_be_visible(timeout=TIMEOUT_MS)
+        assert page.locator("#send").is_disabled()
+        assert page.locator("#prompt").is_disabled()
+        assert page.locator("#cancel").is_disabled()
+        # The disconnect is said once: no error bubble for the failed turn, and the controls stay off.
+        assert page.locator(".msg.error").count() == 0
+        page.wait_for_timeout(500)
+        assert page.locator("#status").inner_text() == "Disconnected"
+        assert page.locator("#send").is_disabled()
+    finally:
+        page.close()
+
+
+def test_only_a_missing_msedge_channel_counts_as_not_installed():
+    missing = "Chromium distribution 'msedge' is not found at C:\Program Files\Microsoft\Edge\msedge.exe"
+    assert edge_not_installed(missing)
+    assert not edge_not_installed("Browser closed unexpectedly while starting msedge")
+    assert not edge_not_installed("Target page, context or browser has been closed")

@@ -460,9 +460,9 @@ class StdioServer:
                    for option in request.options]
         tool_call: dict[str, Any] = {"toolCallId": f"t{turn}-{request.tool_call_id}", "title": request.title,
                                      "status": "pending", "rawInput": request.arguments}
-        if request.preview is not None:  # the diff or the proposed content the user approves (an extension, see protocol.md)
-            tool_call["preview"] = {"kind": request.preview.kind, "text": request.preview.text,
-                                    "path": request.preview.path, "shell": request.preview.shell}
+        if request.preview is not None:  # the diff or the proposed content the user approves: ACP's _meta extension point
+            tool_call["_meta"] = {"preview": {"kind": request.preview.kind, "text": request.preview.text,
+                                              "path": request.preview.path, "shell": request.preview.shell}}
         self._send(_request(request_id, "session/request_permission", {
             "sessionId": session.session_id,
             "toolCall": tool_call,

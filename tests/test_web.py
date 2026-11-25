@@ -205,7 +205,7 @@ def test_an_edit_request_carries_the_diff_preview(tmp_path):
             messages = s.read_until(s.request("session/prompt", {
                 "sessionId": session_id, "prompt": [{"type": "text", "text": "edit it"}]}))
     permission = next(m for m in messages if m.get("method") == "session/request_permission")
-    preview = permission["params"]["toolCall"]["preview"]
+    preview = permission["params"]["toolCall"]["_meta"]["preview"]
     assert preview["kind"] == "diff" and preview["path"].endswith("notes.txt")
     assert "-beta" in preview["text"] and "+gamma" in preview["text"]
     assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "alpha\ngamma\n"
