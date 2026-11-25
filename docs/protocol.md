@@ -1,6 +1,6 @@
-# local-agent stdio protocol
+# local-agent protocol
 
-`local-agent serve --stdio` runs the agent as an Agent Client Protocol (ACP) agent. An editor, a GUI or a script starts it as a child process and talks to it over stdin and stdout.
+`local-agent serve --stdio` runs the agent as an Agent Client Protocol (ACP) agent. An editor or a script starts it as a child process and talks to it over stdin and stdout. `local-agent serve --web` serves the same messages over a WebSocket on localhost, for the web UI and other local clients (see [WebSocket transport](#websocket-transport-serve---web)).
 
 - **ACP version:** protocol version **1** (`protocolVersion: 1`). Checked against the v1 schema (release `schema.json` of agentclientprotocol.com, fetched 2026-11-25) and the v1 pages for initialization, session setup, prompt turn, tool calls, cancellation and errors. ACP v2 is in preview upstream and is not implemented; the server answers `protocolVersion: 1` to any client version.
 - **Transport:** JSON-RPC 2.0, one message per line, UTF-8, each line ends with `\n`. Output is ASCII-only JSON (non-ASCII characters are escaped), so any console encoding reads it.
@@ -12,13 +12,45 @@
 local-agent serve --stdio [--model NAME] [--host URL] [--num-ctx N] [--cwd FOLDER] [--profile NAME] [--config FILE] [--no-plugins]
 ```
 
-- `--stdio` is required. It is the only transport for now (the WebSocket server for the GUI is a later task, T15).
+- Choose one transport: `--stdio` (this section) or `--web` (see [WebSocket transport](#websocket-transport-serve---web)). `--port` applies to `--web` only.
 - The settings flags are the same as for `local-agent chat`, and use the same config file, `OLLAMA_HOST` and precedence (flags, then environment, then config file, then defaults; see README).
 - `--cwd` is the default workspace. A session can name its own `cwd` in `session/new`.
 - Plugins and MCP servers from the config start before the first message and close at EOF.
 - **stdout carries only protocol lines.** Warnings and logs (plugin and MCP problems, the model check at start-up, unsupported request fields) go to stderr. While the server runs, file descriptor 1 (the process's stdout) is pointed at stderr, and `sys.stdout` too. So a stray `print`, `os.system`, a `subprocess` with no capture, or a direct `os.write(1, ...)` from a plugin or a tool lands on stderr. The protocol writes to a copy of the original stdout, and fd 1 is restored when the server returns.
 
 Shutdown: when stdin reaches EOF, the server cancels every running turn and waits for them with one shared deadline of 10 s in total. A turn still running after that is reported on stderr. Then the server closes the MCP servers and the plugins and exits with code 0. Ctrl+C does the same.
+
+## WebSocket transport (`serve --web`)
+
+```
+local-agent serve --web [--port N] [the same settings flags as --stdio]
+```
+
+The server listens on `127.0.0.1` only, on port `N` (default `0`: a free port the system picks). It prints two lines to stderr at start-up:
+
+```
+local-agent web server: http://127.0.0.1:52811/
+WebSocket: ws://127.0.0.1:52811/ws?token=<token>
+```
+
+**Token.** Each process makes a new random token (32 bytes, URL-safe, `secrets.token_urlsafe`) when it starts; it is not saved and not reused. Every WebSocket must present it, in one of two ways:
+
+- the query parameter `token` on the WebSocket URL (`ws://127.0.0.1:PORT/ws?token=...`). Browsers cannot set headers on a WebSocket, so this is the way the web UI connects;
+- or the header `Authorization: Bearer <token>`, for scripts and editor extensions. If an `Authorization` header is sent, it is the one that is checked.
+
+The comparison is constant-time (`hmac.compare_digest`). A missing or wrong token is refused.
+
+**Origin.** A browser always sends `Origin` on a WebSocket. The server accepts an `Origin` only if it is one of its own origins, `http://127.0.0.1:<port>` or `http://localhost:<port>` (the scheme, host and port must match exactly). Any other origin is refused, even with the right token: `https://`, another port, another host, `null`, and the origins of browser-based extensions and webviews (`vscode-webview://...`, `chrome-extension://...`). So a client that runs in a webview or an extension sends the token as `Authorization: Bearer` and sends no `Origin`; a page served from this server (T16) uses the same origin and is accepted. **A request with no `Origin` header is accepted if the token is right.** Such a request comes from a non-browser client (a script, an extension, a test tool). A web page cannot send a request without `Origin`, so this does not weaken the check against web pages. The token still stops other local programs that do not have it.
+
+**Refusals.** A refused connection is closed before it is accepted, so the handshake gets HTTP `403`; the server logs one warning line on stderr that gives the reason and does not print the token. The check runs before any message is read.
+
+**Messages.** One JSON-RPC message per WebSocket text frame. It is the same JSON as one stdio line, without the trailing newline. The agent sends each message as one text frame. The methods, the events, the errors and the permission flow are the same as on stdio, so everything in this document applies. Each WebSocket is its own server: sessions, the "allow always" answers and the one-prompt-per-session rule are per connection, and a `sessionId` from another connection is `-32002`. A binary frame is read as UTF-8 text. A line longer than 16 MiB of characters gets `-32600`, as on stdio, and the connection stays open. The WebSocket layer accepts a message of up to 64 MiB of UTF-8 bytes (the most a 16 MiB line can take), so every such line reaches the server; a larger message is closed by the WebSocket layer with code 1009.
+
+**Shared runtime.** Plugins, MCP servers and the model check start once for the process, before the server accepts connections, and are closed after the last connection's turns stop. Ctrl+C stops the server; the running turns are cancelled as on stdio, with the same 10 s shared deadline.
+
+**Logs.** uvicorn's access log is off, so the token is not written in the log. Nothing else is printed to stdout by the server.
+
+**Not yet:** the web UI is not built (T16). `GET /` returns a one-line text page and nothing else. There are no HTTP routes for the protocol; only `/ws`. The OpenAPI and docs routes are off.
 
 ## Framing
 

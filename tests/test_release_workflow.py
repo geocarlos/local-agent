@@ -173,3 +173,13 @@ def test_referenced_scripts_exist():
     for rel in ["packaging/build.ps1", "packaging/build-installer.ps1", "packaging/smoke-exe.ps1",
                 "packaging/smoke/smoke_stdlib.py", "tests/test_frozen_exe.py"]:
         assert (ROOT / rel).is_file(), rel
+
+
+def test_smoke_script_requires_ctypes_and_starts_serve_web_on_its_own_process():
+    text = (ROOT / "packaging" / "smoke-exe.ps1").read_text(encoding="utf-8")
+    required_line = next(line for line in text.splitlines() if line.startswith("$Required"))
+    assert '"ctypes"' in required_line  # click (uvicorn's dependency) needs it in the frozen app
+    assert '"serve", "--web"' in text and "--no-plugins" in text
+    assert "WebSocket: ws://127" in text  # the banner the script waits for
+    assert "$Web.Kill()" in text  # stops its own process by handle
+    assert "Stop-Process" not in text and "taskkill" not in text.lower() and "Get-Process" not in text

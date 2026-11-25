@@ -97,6 +97,7 @@ Type a request at the `You:` prompt. Type `exit` or `quit` to leave. Press Ctrl+
 | --- | --- |
 | `local-agent` or `local-agent chat` | the terminal chat (the REPL above) |
 | `local-agent serve --stdio` | runs the agent as an Agent Client Protocol (ACP) server on stdin and stdout, for editors and other programs; see [docs/protocol.md](docs/protocol.md) |
+| `local-agent serve --web` | runs the same server over a WebSocket on `127.0.0.1` with a token printed at start, for the web UI and local clients; see [Web server](#web-server-serve---web) |
 | `local-agent gui` | a placeholder for now: it prints that the GUI arrives in a later version and exits with code 2 |
 
 With no subcommand, every flag is a chat flag, so existing commands keep working. `chat` and `serve` take the same settings flags (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The subcommand must come first: `local-agent serve --stdio --cwd X`. `local-agent --cwd X serve --stdio` is refused with a message that says so. `local-agent --help` and `local-agent chat --help` list the subcommands.
@@ -118,6 +119,24 @@ uv run local-agent serve --stdio --cwd C:\src\my-project
 ```
 
 If Ollama is not running, you get `Error: Cannot reach Ollama at http://127.0.0.1:11434. Start it with ollama serve ...`. Start the server and send the request again. If the model is not installed, the error suggests `ollama pull qwen3-vl:8b`.
+
+### Web server (`serve --web`)
+
+`local-agent serve --web` runs the same agent server as `--stdio`, over a WebSocket at `ws://127.0.0.1:PORT/ws`. Each WebSocket is one ACP session server, with the same messages, events, approvals and errors; the protocol is in [docs/protocol.md](docs/protocol.md#websocket-transport-serve---web).
+
+```sh
+uv run local-agent serve --web                 # a free port, chosen by the system
+uv run local-agent serve --web --port 8765     # a fixed port
+```
+
+- **Address.** The server binds `127.0.0.1` only. There is no option for another address.
+- **Token.** Each start prints a new random token, on stderr, in the line `WebSocket: ws://127.0.0.1:PORT/ws?token=...`. Pass it as the `token` query parameter, or as `Authorization: Bearer <token>`. A missing or wrong token is refused before the connection is accepted. Anyone who has the token can make the agent act as you, so keep it private; it changes on every start.
+- **Origin.** A connection that sends an `Origin` header is accepted only from `http://127.0.0.1:PORT` or `http://localhost:PORT`. A connection with no `Origin` (a script or an editor extension) is accepted if the token is right.
+- **Not yet.** The web UI is a later task (T16); `GET /` returns a one-line page that says where the WebSocket is.
+- **Shutdown.** Ctrl+C stops the server. Running turns are cancelled with the same 10 s shared deadline as stdio, then the MCP servers and plugins are closed.
+- **Port.** On Windows the port is opened for this process alone, so another program cannot take a fixed `--port` (it gets an error instead).
+- **Extensions and webviews.** Their origins (`vscode-webview://`, `chrome-extension://`) are refused. Such a client sends the token as `Authorization: Bearer` and no `Origin`.
+- **Build note (conda Python).** An exe built on a conda Python needs `ffi-8.dll` (the `_ctypes` library) next to it, in `_internal`. Without it `serve --web` fails at start-up with a missing DLL, because click (a dependency of uvicorn) imports `ctypes`. The release build (uv-managed Python) includes it; `packaging\smoke-exe.ps1` checks that `serve --web` starts.
 
 ## Configuration
 
@@ -315,9 +334,10 @@ Entry points are loaded sorted by name, after the folder. A module that was alre
 
 ```
 src/local_agent/
-  __init__.py          # main() entry point: subcommands chat, serve --stdio, gui (placeholder); parses flags, loads settings, changes into the workspace
+  __init__.py          # main() entry point: subcommands chat, serve --stdio, serve --web, gui (placeholder); parses flags, loads settings, changes into the workspace
   __main__.py          # python -m local_agent
-  frontends/server.py  # serve --stdio: ACP over JSON-RPC lines; sessions, prompt turns on a worker thread, permission requests
+  frontends/server.py  # ACP over JSON-RPC lines (StdioServer: sessions, prompt turns on a worker thread, permission requests); serve --stdio; the start-up shared with --web
+  frontends/web.py     # serve --web: FastAPI and uvicorn on 127.0.0.1; a WebSocket per connection running a StdioServer; token and Origin checks
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage
@@ -446,6 +466,7 @@ Limitations of the built app:
 
 - **Entry-point plugins are not loaded.** A package installed with a `local_agent.tools` entry point cannot be added to the frozen app. The loader finds none and prints nothing. **File plugins still load:** a `*.py` file in the tools folder can `from local_agent.plugin import tool` and use the standard-library modules bundled in the app. The build lists these extra ones in `hiddenimports` (`packaging\local-agent.spec`): `sqlite3`, `xml.etree.ElementTree`, `xml.dom.minidom`, `unittest`, `csv`, `decimal` and `zipfile`. Other standard-library modules are not guaranteed: a module the build does not bundle fails with a clear per-plugin warning, and the agent runs on without that plugin. Pure-Python modules are sometimes in the bundle without being listed (`colorsys` loaded in the check below), so add a module to `hiddenimports` before relying on it. `tkinter` is excluded. A package that is not standard library (a plugin importing `rich`, for example) is refused with a `ModuleNotFoundError` warning in the same way.
 - **Standard-library DLLs on the build machine.** The build machine's base Python is miniforge/conda (`C:\ProgramData\miniforge3`). Its DLLs for `_ctypes` (`ffi-8.dll`), `_bz2` (`libbz2.dll`), `_lzma` (`liblzma.dll`) and `_sqlite3` (`sqlite3.dll`) are in its `Library\bin` folder, which PyInstaller does not collect here (the build log reports `Library not found`). So on this build, plugins that import `ctypes`, `bz2`, `lzma` or `sqlite3` fail with a warning, even though `sqlite3` is in the list above. A build on a python.org or uv-managed Python (T14 CI) may differ; that is not verified.
+- **`ctypes` is now required by the smoke test.** `serve --web` imports it through click (uvicorn's dependency), so an exe without `_ctypes` cannot start the web server. On the conda build machine, copy `ffi-8.dll` into the app's `_internal` folder; with that copy, the reviewer ran `serve --web` and `initialize` succeeded. Without it, `packaging\smoke-exe.ps1` fails at step 4.
 - **MCP servers run the program they name.** `command` is looked up on PATH, so a Python MCP server needs a Python of its own; the exe does not provide one.
 - **Ollama is not included.** It must run as before (see Requirements).
 - **Not signed.** Windows SmartScreen and Defender may warn about an unsigned executable.
