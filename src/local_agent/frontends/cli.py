@@ -52,7 +52,11 @@ class TerminalApprover:
             prompt = f"\n[APPROVE] {request.title}? [y]es / [a]lways for this session / [n]o: "
         else:
             prompt = f"\n[APPROVE] {request.title}? (y/n): "
-        answer = input(prompt).strip().lower()
+        try:
+            answer = input(prompt).strip().lower()
+        except EOFError:  # input ended (piped stdin): nothing approved, the tool is refused
+            print()
+            return Decision.REJECT_ONCE
         if answer == "y":
             return Decision.ALLOW_ONCE
         if answer in ("a", "always") and offers_always:
@@ -225,7 +229,7 @@ def run(settings: Settings | None = None, client: loop.ChatClient | None = None)
         while True:
             try:
                 user_input = input("\nYou: ").strip()
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):  # Ctrl+C, or input ended (piped stdin): same as exit
                 print()
                 break
             if user_input.lower() in {"exit", "quit"}:
