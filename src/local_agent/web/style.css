@@ -155,6 +155,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent);
 .approval h2 { overflow-wrap: anywhere; }
 .approval::backdrop { background: rgba(0, 0, 0, 0.45); }
 .preview { overflow: auto; min-height: 0; flex: 1; }
+.preview .truncated { color: var(--warn-text); font-size: 0.85rem; margin: 0.4rem 0 0; }
 .preview .label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.3rem; overflow-wrap: anywhere; }
 pre.code {
   margin: 0; max-height: 50vh; overflow: auto; background: var(--code-bg); padding: 0.5rem;
