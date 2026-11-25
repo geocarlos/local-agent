@@ -1,6 +1,8 @@
-"""The stdio server: `local-agent serve --stdio`, the Agent Client Protocol (ACP) over JSON-RPC 2.0.
+"""The ACP server: `local-agent serve --stdio` (JSON lines on stdin and stdout) and the WebSocket
+transport of `serve --web` (frontends/web.py). Both run the same `StdioServer` over a line reader and a
+line writer, so the session, turn and approval logic exists once. The JSON-RPC 2.0 framing is ACP.
 
-One JSON object per line in each direction, UTF-8, `\\n`-terminated. The wire shapes follow ACP
+Stdio framing: one JSON object per line in each direction, UTF-8, `\\n`-terminated. The wire shapes follow ACP
 protocol version 1 (checked against the v1 schema; see docs/protocol.md and TASKS.md, T11).
 
 Threads: the main thread reads stdin and answers requests. A `session/prompt` runs its turn on a
@@ -528,6 +530,35 @@ def _bounded_lines(stream: TextIO, limit: int) -> Iterator[Any]:
         yield OVERSIZE_LINE
 
 
+@contextlib.contextmanager
+def running_agent(settings: Settings, *, client: Any, log: Callable[[str], None]) -> Iterator[None]:
+    """What every transport needs around its server: plugins and MCP servers start first, the startup
+    model check runs beside the server, and everything closes last. Shared by stdio and the web server."""
+    plugin_runtime = None
+    mcp = None
+    probe_thread = None
+    try:
+        plugin_runtime = plugins.load_plugins(settings)
+        mcp = mcp_tools.start_mcp_servers(settings.mcp_servers, timeout_s=settings.command_timeout_s)
+        for line in plugin_runtime.warnings + mcp.warnings:
+            log(line)
+        summary = plugins.describe_loaded(plugin_runtime)
+        if summary is not None:
+            log(summary)
+        # The model check runs beside the server, so a slow or unreachable Ollama cannot delay initialize.
+        probe_thread = threading.Thread(target=_probe_in_background, args=(client, settings, log),
+                                        name="startup-probe", daemon=True)
+        probe_thread.start()
+        yield
+    finally:
+        if probe_thread is not None:  # let a quick model check finish, so its warning is not lost
+            probe_thread.join(PROBE_JOIN_S)
+        if mcp is not None:
+            mcp.close()
+        if plugin_runtime is not None:
+            plugin_runtime.close()
+
+
 def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str] | None = None,
                 writer: TextIO | None = None, errors: TextIO | None = None) -> None:
     """Run the stdio server until stdin ends. Plugins and MCP servers start first and close last.
@@ -548,7 +579,8 @@ def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str]
     if writer is None:
         owned_fd = os.dup(1)
         os.dup2(2, 1)    # fd 1 now points at stderr, for this process and its children
-        owned_writer = io.TextIOWrapper(os.fdopen(owned_fd, "wb"), encoding="utf-8", newline="\n", write_through=True)
+        owned_writer = io.TextIOWrapper(os.fdopen(owned_fd, "wb"), encoding="utf-8", newline="\n",
+                                        write_through=True)
         writer = owned_writer
     if reader is None:
         reader = _bounded_lines(io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace"), MAX_LINE_CHARS)
@@ -556,33 +588,11 @@ def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str]
         client = ollama.Client(host=settings.host)
 
     try:
-        with contextlib.redirect_stdout(errors):
-            plugin_runtime = None
-            mcp = None
-            probe_thread = None
+        with contextlib.redirect_stdout(errors), running_agent(settings, client=client, log=log):
             try:
-                plugin_runtime = plugins.load_plugins(settings)
-                mcp = mcp_tools.start_mcp_servers(settings.mcp_servers, timeout_s=settings.command_timeout_s)
-                for line in plugin_runtime.warnings + mcp.warnings:
-                    log(line)
-                summary = plugins.describe_loaded(plugin_runtime)
-                if summary is not None:
-                    log(summary)
-                # The model check runs beside the server, so a slow or unreachable Ollama cannot delay initialize.
-                probe_thread = threading.Thread(target=_probe_in_background, args=(client, settings, log),
-                                                name="startup-probe", daemon=True)
-                probe_thread.start()
-                server = StdioServer(settings, client=client, reader=reader, writer=writer, log=log)
-                server.serve()
+                StdioServer(settings, client=client, reader=reader, writer=writer, log=log).serve()
             except KeyboardInterrupt:  # Ctrl+C ends the server like EOF does
                 pass
-            finally:
-                if probe_thread is not None:  # let a quick model check finish, so its warning is not lost
-                    probe_thread.join(PROBE_JOIN_S)
-                if mcp is not None:
-                    mcp.close()
-                if plugin_runtime is not None:
-                    plugin_runtime.close()
     finally:
         if owned_writer is not None:
             with contextlib.suppress(ValueError, OSError):

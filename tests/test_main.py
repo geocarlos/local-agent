@@ -99,3 +99,36 @@ def test_an_unknown_flag_without_a_subcommand_is_still_an_ordinary_error(capsys)
     err = capsys.readouterr().err
     assert "unrecognized arguments: --bogus" in err
     assert "subcommand" not in err
+
+
+def test_serve_web_takes_the_flags_and_the_port(monkeypatch, tmp_path):
+    from local_agent.frontends import web
+
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+    monkeypatch.setattr(web, "serve_web", lambda settings, *, port=0: seen.update(port=port, model=settings.model))
+    main(["serve", "--web", "--port", "8123", "--model", "some-model", "--config", str(_empty_config(tmp_path))])
+    assert seen == {"port": 8123, "model": "some-model"}
+
+
+def test_serve_web_without_a_port_takes_a_free_one(monkeypatch, tmp_path):
+    from local_agent.frontends import web
+
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+    monkeypatch.setattr(web, "serve_web", lambda settings, *, port=0: seen.setdefault("port", port))
+    main(["serve", "--web", "--config", str(_empty_config(tmp_path))])
+    assert seen["port"] == 0
+
+
+@pytest.mark.parametrize("argv, message", [
+    (["serve", "--web", "--stdio"], "not allowed with"),
+    (["serve", "--stdio", "--port", "8000"], "--port applies to --web only"),
+    (["serve", "--web", "--port", "70000"], "port must be 0 to 65535"),
+    (["serve", "--web", "--port", "abc"], "not a port number"),
+])
+def test_serve_web_flag_mistakes_exit_2(argv, message, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(argv)
+    assert exit_info.value.code == 2
+    assert message in capsys.readouterr().err

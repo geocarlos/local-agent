@@ -99,7 +99,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 
 ## M3: GUI
 
-### T15 Local web server: `todo`
+### T15 Local web server: `in review`
 - FastAPI + WebSocket streaming the same events as stdio.
 - Bind `127.0.0.1` only, random per-launch token, `Origin` check.
 - **Done when:** tests reject missing token, wrong token, and foreign `Origin`, and drive a turn over WebSocket.
@@ -468,3 +468,18 @@ Findings from **verify** items and follow-ups go here, by task id.
   - `ctypes`, `bz2` and `lzma` passed on the uv build; they could be made required in the smoke gate.
   - The `astral-sh/setup-uv` pin comment says `# v6`; the pinned commit is tag v6.8.0.
   - Release notes are generated from PR titles (`--generate-notes`). No CHANGELOG file.
+
+**T15**
+- **Decided (one server, two transports):** `serve --web` runs one `StdioServer` per WebSocket connection, so sessions, turns, approvals and errors are the stdio ones. The start-up that both transports need (plugins, MCP servers, the model check, and their close) moved out of `serve_stdio` into `server.running_agent`. `tests/test_server.py` is unchanged and passes.
+- **Decided (token):** `secrets.token_urlsafe(32)`, new on every start, never saved. It is printed on stderr in the line `WebSocket: ws://127.0.0.1:PORT/ws?token=...`. A client sends it as the `token` query parameter (browsers cannot set WebSocket headers) or as `Authorization: Bearer` (scripts and extensions); a present `Authorization` header is the one checked. Compared with `hmac.compare_digest`. The uvicorn access log is off, so the token is not logged.
+- **Decided (Origin):** if an `Origin` header is sent, it must be exactly `http://127.0.0.1:<port>` or `http://localhost:<port>`. If there is no `Origin`, the connection is allowed only with a valid token. Reason: a browser always sends `Origin` and a web page cannot leave it out, so a missing `Origin` means a script or an extension, and the token is the only gate for those. Refusals close the socket before accept (HTTP 403, close code 1008) and log one warning line without the token.
+- **Decided (port and bind):** `--port N`, default 0 (a free port from the system). The server binds `127.0.0.1` with its own socket and hands it to uvicorn, so the port is known before the Origin check and before the URL is printed. There is no host option. The OpenAPI and docs routes are off.
+- **Decided (lifetime):** plugins and MCP servers start once per process and close after the last connection's turns stop. Each connection's thread is joined at shutdown under the same 10 s deadline as stdio.
+- **Dependencies:** `uv add fastapi uvicorn websockets` (fastapi 0.165.0, uvicorn 0.54.0, websockets 17.4). Starlette and uvicorn were already in the lock through `mcp`. `websockets` is needed for uvicorn's WebSocket support; the server sets `ws="websockets"` explicitly. The `uv add` sync worked; no running exe was locked.
+- **Verified:** `uv run pytest -q`: 820 passed, 1 skipped. 27 tests are new: `tests/test_web.py` (20, TestClient: missing, wrong and foreign-origin refusals, the Bearer header, a turn and an approved write over the socket, sessions per connection, errors), `tests/test_web_process.py` (1: a real `serve --web` process with uvicorn and a real `websockets` client; refusals and an `initialize`), `tests/test_main.py` (6: flags, port range, the transport choice). `uv lock --check` exits 0.
+- **Verified (PyInstaller, not built):** the `_pyinstaller_hooks_contrib` in the venv include `hook-uvicorn` (collect_submodules of uvicorn) and `hook-websockets`, so the hidden imports the WebSocket stack loads at run time are covered. `web.py` is in `collect_submodules("local_agent")`. FastAPI, Starlette and Pydantic are reached by static analysis. No metadata was added: none of them is read at run time by our code. Not verified: a build; run `packaging/build.ps1` to confirm.
+- **Not verified:** a live turn against Ollama over the WebSocket; a real browser (the tests send `Origin` by hand); Ctrl+C on a running `serve --web` in a console; the frozen exe; ruff was not run (not installed here).
+- **Follow-ups:**
+  - T16 mounts the static bundle. `GET /` is the placeholder route. T16 decides how the page gets the token; a `#token=` fragment that the page reads (never sent to the server) is the likely choice.
+  - The `Host` header is not checked. For browsers, Origin already blocks DNS rebinding; a non-browser client with the token is trusted.
+  - No limit on connections or on messages per second. The token is in the WebSocket URL, so a browser history or a proxy log could keep it.
