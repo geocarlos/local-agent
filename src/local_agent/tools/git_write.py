@@ -206,10 +206,8 @@ def git_commit(
     *,
     context: ToolContext,
 ) -> str:
-    """Commit changes in the workspace's git repository (asks for approval first; the preview lists what
-    will be committed). Without paths it commits what is already staged. With paths it stages those files
-    and commits only them. Repository hooks and filters do not run, and the commit is not signed. Paths that
-    use a repo-defined filter are refused: stage them with git add, then commit without paths."""
+    """Commit the staged changes, or only the given paths (staged first). Paths that use a repo-defined
+    filter are refused: stage those with git add, then commit without paths."""
     items = _paths(paths)
     if items:
         ok, output = _git_process(["add", "--", *items], context, None)

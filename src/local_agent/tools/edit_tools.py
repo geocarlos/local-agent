@@ -189,12 +189,11 @@ def _edit_precheck(path: str, old_text: str, new_text: str) -> str | None:
 )
 def edit_file(
     path: str,
-    old_text: Annotated[str, "Exact text to replace, copied from the file. It must occur exactly once; "
-                              "include surrounding lines if it is short."],
+    old_text: Annotated[str, "Exact text to replace; it must occur exactly once in the file."],
     new_text: Annotated[str, "Text that replaces old_text. An empty string deletes old_text."],
 ) -> str:
-    """Replace one exact occurrence of old_text in an existing text file (asks for approval first, shows a diff).
-    Fails, and changes nothing, if old_text is not found or occurs more than once."""
+    """Replace one exact occurrence of old_text in an existing text file. Include enough surrounding lines
+    to make old_text unique; if it is missing or occurs more than once, nothing changes."""
     try:
         plan = plan_edit(path, old_text, new_text)
     except EditError as e:

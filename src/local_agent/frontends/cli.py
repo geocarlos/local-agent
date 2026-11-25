@@ -131,6 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", help=f"Ollama server URL (default: OLLAMA_HOST, config file, else {DEFAULT_HOST})")
     parser.add_argument("--num-ctx", type=int, help="context window in tokens, sent to Ollama with every request")
     parser.add_argument("--cwd", type=Path, help="workspace folder to start in; tools run there (default: current folder)")
+    parser.add_argument("--profile", help="tool profile: minimal (read tools), coding (read, write and exec; the default), "
+                                          "or all (adds web_fetch when enabled in config)")
     parser.add_argument("--config", type=Path, help="config file to read instead of the per-user config.toml")
     return parser
 
@@ -148,6 +150,7 @@ def settings_from_args(args: argparse.Namespace, *, env: Mapping[str, str] | Non
             "host": args.host,
             "num_ctx": args.num_ctx,
             "workspace": str(args.cwd) if args.cwd is not None else None,
+            "tool_profile": args.profile,
         },
     )
 

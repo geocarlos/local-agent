@@ -116,7 +116,7 @@ def test_the_shell_parameter_and_the_tool_description_name_cmd_as_the_default():
     tool = tools.TOOLS["run_command"]
 
     assert "cmd (the default)" in tool.parameters["properties"]["shell"]["description"]
-    assert 'shell is "cmd" (the default) or "powershell"' in tool.description
+    assert "cmd is the default shell" in tool.description
 
 
 def test_cmd_is_shown_as_cmd(tmp_path):

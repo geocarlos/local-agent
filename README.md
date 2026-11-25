@@ -5,8 +5,9 @@ A small command-line coding assistant that runs entirely on local models through
 ## Features
 
 - **Local models only**: talks to your Ollama server, so code and prompts stay on your machine.
-- **Tool calling**: the model can use `read_file` (optional line range), `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`, `edit_file` (replace one exact occurrence), `write_file`, `run_command`, `run_tests` and `git_commit`. The read tools run without asking. Models that print a tool call as text instead (for example `qwen2.5-coder:7b`) are handled too.
-- **Approval gates**: every write, edit, command, test run and commit asks first. `y` allows once, `n` refuses, and `a` (where offered) allows the same tool in this workspace for the rest of the session. Writes and edits show a diff, commands show the command line and its shell. `git_commit` always asks (see Safety).
+- **Tool calling**: the model can use `read_file` (optional line range), `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`, `edit_file` (replace one exact occurrence), `write_file`, `run_command`, `run_tests`, `git_commit` and, off by default, `web_fetch` (see Tool profiles). The read tools run without asking. Models that print a tool call as text instead (for example `qwen2.5-coder:7b`) are handled too.
+- **Tool profiles**: `minimal` (read tools only), `coding` (the default: read, write and exec tools) or `all` (adds `web_fetch` when it is switched on). Smaller sets suit small models. Tool descriptions are kept short to save context.
+- **Approval gates**: every write, edit, command, test run, commit and web fetch asks first. `y` allows once, `n` refuses, and `a` (where offered) allows the same tool in this workspace for the rest of the session. Writes and edits show a diff, commands show the command line and its shell. `git_commit` always asks (see Safety).
 - **Workspace sandbox**: file paths resolve against the workspace folder. A path outside it, including through `..`, a junction or a symlink, asks on its own, even for reads, and only `y` or `n` is accepted there. Without an answer of `y` it is refused.
 - **Guard rails**: commands and tests time out after 60 s (the processes they started are killed too), tool output is truncated at 8000 characters, and each turn is capped at 10 tool rounds. All three are configurable.
 - **Context window set explicitly**: every request sends `num_ctx` (default 8192), and each turn shows how many tokens the prompt used. A warning appears when the prompt nearly fills the window.
@@ -46,6 +47,7 @@ Flags override the config file and the environment for one run:
 ```sh
 uv run local-agent --model qwen3-vl:8b --num-ctx 8192
 uv run local-agent --cwd C:\src\my-project --config C:\tmp\alt.toml
+uv run local-agent --profile minimal
 ```
 
 If Ollama is not running, you get `Error: Cannot reach Ollama at http://127.0.0.1:11434. Start it with ollama serve ...`. Start the server and send the request again. If the model is not installed, the error suggests `ollama pull qwen3-vl:8b`.
@@ -54,7 +56,7 @@ If Ollama is not running, you get `Error: Cannot reach Ollama at http://127.0.0.
 
 Settings come from four places, highest priority first:
 
-1. **Command-line flags** (`--model`, `--host`, `--num-ctx`, `--cwd`, `--config`).
+1. **Command-line flags** (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`).
 2. **`OLLAMA_HOST`** environment variable. It sets the host only, and may omit `http://` as the Ollama CLI allows.
 3. **The config file** (TOML), described below.
 4. **Built-in defaults**.
@@ -73,6 +75,8 @@ max_output_chars = 8000
 command_timeout_s = 60
 test_command = "uv run pytest -q"
 workspace = "C:\\src\\my-project"   # or a relative path, taken from the config file's folder
+tool_profile = "coding"
+network_enabled = false             # true offers web_fetch under the all profile
 ```
 
 | Key | Flag | Default | Purpose |
@@ -85,10 +89,27 @@ workspace = "C:\\src\\my-project"   # or a relative path, taken from the config 
 | `command_timeout_s` | | `60` | Timeout for shell commands and test runs, in seconds. On timeout the command and the processes it started are killed. |
 | `test_command` | | (none) | Command that `run_tests` runs when the call gives none, run through cmd. Without it, `run_tests` uses `uv run pytest -q` when the workspace has a `pyproject.toml`, or `npm test` when it has a `package.json`. |
 | `workspace` | `--cwd` | the current folder | The workspace folder. Relative file paths resolve against it, `run_command` starts in it, and paths outside it need approval (see Safety). `--cwd` also changes into it. |
+| `tool_profile` | `--profile` | `coding` | Which tools the model is offered: `minimal`, `coding` or `all`. See Tool profiles. |
+| `network_enabled` | | `false` | Lets the network tools (`web_fetch`) be offered. Off by default. |
+| `network_timeout_s` | | `20` | Time limit for `web_fetch`, in seconds. It covers the whole fetch (redirects included) and each connect or read. A fetch that runs longer is stopped and the model is told. |
 
 An unknown key, a wrong type or an out-of-range value stops the program at startup with a message that names the file or flag, and exit code 2. Example: `Error: C:\...\config.toml: num_ctx must be at least 512, got 100`.
 
 **Why `num_ctx` is set.** Ollama's default context window is chosen from the GPU memory it finds. On the 8 GiB GPU this was tested on, the server log reports `default_num_ctx=4096`. A long chat would then be cut silently, so the agent always sends an explicit value. The 8192 default fits a file read and a few turns; raise it if your GPU has room (see the context warning in the output).
+
+### Tool profiles and the network switch
+
+A profile decides which tools are sent to the model and which the agent will run. A call to any other tool is refused with a message, without a question.
+
+| Profile | Tools |
+| --- | --- |
+| `minimal` | the read tools: `read_file`, `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log` |
+| `coding` (default) | the read tools, plus `edit_file`, `write_file`, `git_commit`, `run_command`, `run_tests` |
+| `all` | every tool, including `web_fetch` when `network_enabled = true` |
+
+`web_fetch` is in the network tier. It is not offered unless `network_enabled = true` is set in the config, whatever the profile. Even then it asks every time, and "allow for this session" is never offered for it. If the model calls it while it is off, the answer is `Error: web_fetch is disabled; enable it in config`.
+
+An unknown profile name is a config error (exit code 2), as is an unknown value for `network_enabled`.
 
 Model notes: `qwen3-vl:8b` makes structured tool calls. `qwen2.5-coder:7b` prints its calls as JSON text; the agent turns those into real tool calls when the reply is only the call (see `core/toolcalls.py`). Replies that mix prose and a call are not converted.
 
@@ -97,7 +118,7 @@ Model notes: `qwen3-vl:8b` makes structured tool calls. `qwen2.5-coder:7b` print
 ```
 src/local_agent/
   __init__.py          # main() entry point: parses flags, loads settings, changes into the workspace
-  config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence
+  config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_result, approval_request, turn_done, error), Usage
   core/model.py        # Ollama error messages, startup probe of the model's capabilities
@@ -111,6 +132,8 @@ src/local_agent/
   tools/git_write.py   # git_commit (write): stages and commits with repository code turned off; never remembered for the session
   tools/read_tools.py  # list_dir, glob, grep, git_status, git_diff, git_log (read; searches stay inside their base folder)
   tools/process.py     # runs a child process with a time limit and kills its whole process tree on timeout
+  tools/web_tools.py   # web_fetch (network): GET over http/https, redirect and size caps, HTML to text
+  tools/profiles.py    # tool profiles (minimal, coding, all) and the network switch: what is offered and allowed to run
   tools/output.py      # truncate(): the shared output cap with its "[truncated N chars]" marker
   frontends/cli.py     # terminal REPL and flags: renders events, answers approvals with y, a (where offered) or n
 tests/
@@ -131,6 +154,8 @@ tests/
   test_exec_tools.py   # run_command shell choice (cmd default), run_tests resolution, timeouts that kill the process tree
   test_git_write.py    # git_commit: what is committed, refusals before the question, no repo hooks or filters, no signing
   test_session_approvals.py # "allow for this session": per tool and workspace, never outside paths, .git writes or git_commit
+  test_profiles.py     # tool profiles and the network switch: what the model is offered, refusals without asking, short descriptions
+  test_web_fetch.py    # web_fetch with a mock transport: asks every time, URL refusals, size and redirect caps, HTML to text
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
 
@@ -167,7 +192,8 @@ def count_lines(path: Annotated[str, "File to count"]) -> str:
         return str(sum(1 for _ in f))
 ```
 
-- `risk`: `Risk.READ` runs without asking. `WRITE`, `EXEC` and `NETWORK` ask the approver first.
+- `risk`: `Risk.READ` runs without asking. `WRITE`, `EXEC` and `NETWORK` ask the approver first. A `NETWORK` tool is offered only with `network_enabled = true` (see Tool profiles), and a tool that should never be remembered for the session sets `allow_always=False`.
+- Keep the docstring to one or two short sentences: it is sent with every request, and small models lose track of long schemas.
 - `paths=("path",)`: names the parameters that are file paths (each must be a `str`, or `str | None` when optional). The core resolves them against the workspace before the tool runs, asks separately for a path outside it, and passes the tool the resolved absolute path. Do not check paths inside the tool.
 - For risky tools, add `approval_title=` (a function returning the question, for example `"Write 12 chars to 'a.txt'"`) and `preview=` (a function returning a `Preview` shown before approval). Both receive the tool's arguments by name. `denied_message=` is what the model receives when the user says no.
 - A tool that needs a limit from the settings declares `context: ToolContext` as a parameter (from `local_agent.tools.registry`). The core fills it in; the model never sees it. `ToolContext.command_timeout_s` and `ToolContext.max_output_chars` are the current values.
@@ -198,6 +224,7 @@ The agent works in one folder, the **workspace**: the folder you start it from, 
   - a path outside the workspace (those always ask, and only `y` or `n` is accepted),
   - a write or edit whose path has a `.git` folder in it (hooks and config, in any case), which asks every time,
   - `git_commit`, which asks every time.
+- **`web_fetch` is the only network tool.** It is off unless `network_enabled = true` is set in the config. When on, it asks every time (no "allow for this session"). It accepts only `http` and `https` URLs without a username or password, makes one plain `GET` per page with no cookies or credentials, and sends the User-Agent `local-agent/<version>`. Redirects are followed by hand (at most 5, each target checked), the body is read up to 2 MB, and `network_timeout_s` is a limit on the whole fetch, redirects included, as well as on each connect or read. A redirect from a public host to a local or private address (`localhost`, a loopback, private, link-local or similar IP address, or a name with no dot) is refused; the model is told to call `web_fetch` with that URL, so the user is asked. Such a fetch is labelled "local/private address" in the approval, and the approval shows a note. Proxy settings from the environment are used, except for `localhost` and loopback addresses, which are always reached directly. Host names are not resolved, so a public name that points at a private address is not caught. The page's text reaches the model, so a fetched page can try to steer it: read the URL before answering `y`.
 - **Not detected**: a hard link inside the workspace that points at a file outside it looks like an inside path. A file swapped for a link after the check is a race that is not closed.
 Windows path cases are covered by `tests/test_sandbox.py`: case and drive-letter case, `C:foo`, `\foo`, UNC, `\\?\` and `\\?\UNC\`, 8.3 short names, junctions (created with `mklink /J` in the test; skipped with a reason if that is not allowed), prefix tricks such as `work-evil` next to `work`, and symlinks (skipped here: Windows refused to create one without Developer Mode or admin).
 

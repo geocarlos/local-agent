@@ -287,3 +287,59 @@ def test_test_command_must_be_a_non_empty_string(tmp_path, value):
 
     with pytest.raises(ConfigError, match="test_command must be a non-empty command line"):
         load_settings(config_file=path, env={})
+
+
+def test_network_is_off_and_the_profile_is_coding_by_default(tmp_path):
+    settings = load_settings(config_file=empty_config(tmp_path), env={})
+
+    assert settings.network_enabled is False
+    assert settings.tool_profile == "coding"
+    assert settings.network_timeout_s == 20
+
+
+def test_network_enabled_and_timeout_come_from_the_file(tmp_path):
+    path = write_config(tmp_path, "network_enabled = true\nnetwork_timeout_s = 5\n")
+
+    settings = load_settings(config_file=path, env={})
+
+    assert settings.network_enabled is True
+    assert settings.network_timeout_s == 5
+
+
+@pytest.mark.parametrize("text, message", [
+    ('network_enabled = "yes"', "must be true or false"),
+    ("network_enabled = 1", "must be true or false"),
+    ("network_timeout_s = 0", "must be at least 1"),
+    ('tool_profile = "everything"', "must be one of minimal, coding, all"),
+    ("tool_profile = 3", "must be one of minimal, coding, all"),
+])
+def test_bad_network_or_profile_values_are_config_errors(tmp_path, text, message):
+    with pytest.raises(ConfigError, match=message):
+        load_settings(config_file=write_config(tmp_path, text), env={})
+
+
+def test_the_profile_comes_from_the_file_and_the_flag_overrides_it(tmp_path):
+    path = write_config(tmp_path, 'tool_profile = "minimal"\n')
+
+    assert load_settings(config_file=path, env={}).tool_profile == "minimal"
+    assert load_settings(config_file=path, env={}, overrides={"tool_profile": "all"}).tool_profile == "all"
+
+
+def test_an_unknown_profile_flag_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="--profile must be one of minimal, coding, all"):
+        load_settings(config_file=empty_config(tmp_path), env={}, overrides={"tool_profile": "nope"})
+
+
+def test_the_profile_flag_is_parsed_and_overrides_the_file(tmp_path):
+    path = write_config(tmp_path, 'tool_profile = "minimal"\n')
+    args = cli.build_parser().parse_args(["--config", str(path), "--profile", "all"])
+
+    assert cli.settings_from_args(args, env={}).tool_profile == "all"
+
+
+def test_main_exits_2_for_an_unknown_profile_flag(tmp_path, capsys):
+    with pytest.raises(SystemExit) as info:
+        main(["--config", str(empty_config(tmp_path)), "--profile", "nope"])
+
+    assert info.value.code == 2
+    assert "--profile must be one of" in capsys.readouterr().err

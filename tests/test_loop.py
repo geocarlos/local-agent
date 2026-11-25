@@ -50,7 +50,8 @@ def test_plain_text_reply(fake_ollama, capsys):
 
     assert len(client.calls) == 1
     assert client.calls[0]["model"] == DEFAULT_MODEL
-    assert client.calls[0]["tools"] == [t.schema() for t in tools.TOOLS.values()]
+    # The default profile (coding) offers every tool except the network one.
+    assert client.calls[0]["tools"] == [t.schema() for t in tools.TOOLS.values() if t.name != "web_fetch"]
     assert messages[-1].role == "assistant"
     assert messages[-1].content == "hello"
     assert not messages[-1].tool_calls

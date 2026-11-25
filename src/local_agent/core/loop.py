@@ -2,7 +2,9 @@
 
 The loop reports what happens as events (core/events.py) through an EventSink,
 and asks an Approver before any write, exec or network tool runs, and before a
-path argument that resolves outside the workspace is used (see sandbox.py). It never
+path argument that resolves outside the workspace is used (see sandbox.py). Only the
+tools of the active profile are offered, and a call to any other tool is refused
+(see tools/profiles.py). It never
 prints or reads input; the frontend decides how to show events and answer.
 
 Settings (config.Settings) are passed in: model, host, num_ctx (sent with every
@@ -50,7 +52,7 @@ from local_agent.core.events import (
 from local_agent.core.model import OLLAMA_ERRORS, describe_error
 from local_agent.core.toolcalls import parse_text_tool_calls
 from local_agent.permissions import Approver, DenyAll, SessionApprovals, needs_approval
-from local_agent.tools import Location, Tool
+from local_agent.tools import Location, Tool, profiles
 from local_agent.tools.registry import ToolContext
 
 SYSTEM_PROMPT = "You are a concise local coding assistant. Use tools to inspect and edit files."
@@ -147,14 +149,17 @@ def _run_rounds(
     tool_context = ToolContext(command_timeout_s=settings.command_timeout_s,
                                max_output_chars=settings.max_output_chars,
                                workspace=settings.workspace,
-                               test_command=settings.test_command)
+                               test_command=settings.test_command,
+                               network_timeout_s=settings.network_timeout_s)
+    # The tools offered this turn (by the profile and the network switch). Calls to others are refused.
+    offered = profiles.offered_tools(tools.TOOLS, settings)
     for round_no in range(1, settings.max_tool_rounds + 1):
         if cancel.is_set():
             emit(TurnDone(stop_reason="cancelled", text=None, rounds=round_no - 1, usage=usage.value()))
             return None
 
         try:
-            msg = _stream_reply(client, messages, settings, emit, cancel, usage)
+            msg = _stream_reply(client, messages, settings, emit, cancel, usage, offered)
         except KeyboardInterrupt:
             cancel.set()
             msg = None
@@ -175,7 +180,7 @@ def _run_rounds(
 
         # Execute each requested tool and feed results back to the model.
         if _run_calls(calls, round_no, messages, emit, approver, cancel, tool_context, settings.workspace,
-                      session):
+                      session, offered, settings):
             emit(TurnDone(stop_reason="cancelled", text=None, rounds=round_no, usage=usage.value()))
             return None
 
@@ -191,6 +196,7 @@ def _stream_reply(
     emit: EventSink,
     cancel: threading.Event,
     usage: _Usage,
+    offered: dict[str, Tool],
 ):
     """Stream one model reply, emitting its text. Returns the complete assistant message.
 
@@ -204,7 +210,7 @@ def _stream_reply(
     stream = client.chat(
         model=settings.model,
         messages=messages,
-        tools=_tool_schemas(),
+        tools=_tool_schemas(offered),
         stream=True,
         options={"num_ctx": settings.num_ctx},
     )
@@ -251,11 +257,14 @@ def _run_calls(
     tool_context: ToolContext,
     workspace: Path,
     session: SessionApprovals,
+    offered: dict[str, Tool],
+    settings: Settings,
 ) -> bool:
     """Run the tool calls of one reply. Returns True if the turn was cancelled.
 
     Every call gets a tool message, even after a cancel: calls that did not run
-    get CANCELLED_MESSAGE as a failed result.
+    get CANCELLED_MESSAGE as a failed result. A call to a registered tool that the
+    profile or the network switch does not offer is refused here, without a question.
     """
     for index, call in enumerate(calls, start=1):
         name = call["function"]["name"]
@@ -264,8 +273,11 @@ def _run_calls(
         tool = tools.TOOLS.get(name)
         emit(ToolCall(tool_call_id=call_id, name=name, arguments=args,
                       kind=tool.kind if tool else "other"))
+        blocked = profiles.blocked_message(name, tool, offered, settings)
         if cancel.is_set():
             content, status = CANCELLED_MESSAGE, "failed"
+        elif blocked is not None:
+            content, status = blocked, "failed"
         else:
             try:
                 content, status = _run_tool(tool, name, call_id, args, emit, approver, tool_context,
@@ -295,8 +307,8 @@ def _answer_open_calls(messages: list) -> None:
             return
 
 
-def _tool_schemas() -> list:
-    return [t.schema() for t in tools.TOOLS.values()]
+def _tool_schemas(offered: dict[str, Tool]) -> list:
+    return [t.schema() for t in offered.values()]
 
 
 def _run_tool(
