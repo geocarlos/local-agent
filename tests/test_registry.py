@@ -19,15 +19,17 @@ def registry_with(fn, **kwargs) -> dict:
 
 def test_builtin_schemas_match_what_ollama_received_before_t02():
     # These are the exact `tools=` entries ollama produced from the plain functions before T02.
-    assert tools.TOOLS["read_file"].schema() == {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read the contents of a file.",
-            "parameters": {
-                "type": "object",
-                "required": ["path"],
-                "properties": {"path": {"type": "string", "description": ""}},
+    # read_file gained optional line range arguments in T06; its path schema is otherwise unchanged.
+    assert tools.TOOLS["read_file"].schema()["function"] == {
+        "name": "read_file",
+        "description": "Read a text file: all of it, or only lines start_line..end_line (1-based, inclusive), numbered.",
+        "parameters": {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {"type": "string", "description": ""},
+                "start_line": {"type": "integer", "description": "First line to return, 1-based. Omit to start at line 1."},
+                "end_line": {"type": "integer", "description": "Last line to return, inclusive. Omit to read to the end."},
             },
         },
     }

@@ -17,7 +17,7 @@ def make_tool(fn, risk=Risk.READ):
 
 
 def test_the_context_parameter_is_not_in_the_schema():
-    assert set(TOOLS["read_file"].parameters["properties"]) == {"path"}
+    assert set(TOOLS["read_file"].parameters["properties"]) == {"path", "start_line", "end_line"}
     assert set(TOOLS["run_command"].parameters["properties"]) == {"command"}
     assert TOOLS["run_command"].parameters["required"] == ["command"]
 

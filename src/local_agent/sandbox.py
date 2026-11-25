@@ -93,7 +93,8 @@ def check_arguments(
     args = dict(arguments)
     outside: list[ResolvedPath] = []
     for name in path_args:
-        if name not in args:
+        # Absent or null means "not given": an optional path then defaults to the workspace in the tool.
+        if args.get(name) is None:
             continue
         item = resolve(args[name], workspace)
         args[name] = str(item.path)

@@ -5,7 +5,7 @@ A small command-line coding assistant that runs entirely on local models through
 ## Features
 
 - **Local models only**: talks to your Ollama server, so code and prompts stay on your machine.
-- **Tool calling**: the model can use `read_file`, `write_file`, and `run_command`. Models that print a tool call as text instead (for example `qwen2.5-coder:7b`) are handled too.
+- **Tool calling**: the model can use `read_file` (optional line range), `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`, `write_file`, and `run_command`. The read tools run without asking. Models that print a tool call as text instead (for example `qwen2.5-coder:7b`) are handled too.
 - **Approval gates**: every write and command asks `y/n` first. Writes show a preview of the content.
 - **Workspace sandbox**: file paths resolve against the workspace folder. A path outside it, including through `..`, a junction or a symlink, asks `y/n` on its own, even for reads. Without an answer of `y` it is refused.
 - **Guard rails**: shell commands time out after 60 s, tool output is truncated at 8000 characters, and each turn is capped at 10 tool rounds. All three are configurable.
@@ -105,6 +105,8 @@ src/local_agent/
   tools/registry.py    # @tool decorator (risk, paths=), JSON schema from type hints, Tool objects, ToolContext
   tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
   tools/builtin.py     # read_file (read), write_file (write), run_command (exec)
+  tools/read_tools.py  # list_dir, glob, grep, git_status, git_diff, git_log (read; searches stay inside their base folder)
+  tools/output.py      # truncate(): the shared output cap with its "[truncated N chars]" marker
   frontends/cli.py     # terminal REPL and flags: renders events, answers approvals with y/n
 tests/
   fakes.py             # FakeOllama: scripted replies, show() capabilities, token counts, no real model
@@ -118,6 +120,7 @@ tests/
   test_model.py        # startup capability probe (tools missing or present), Ollama-down and model-missing at startup
   test_toolcalls.py    # fallback parser: valid forms, rejected forms, approvals through the loop
   test_tool_context.py # per-turn limits passed to tools, the context argument kept out of the schema
+  test_read_tools.py   # each read tool against temp folders and a temp git repo; auto-allowed; outside paths asked
   test_sandbox.py      # path resolution (..., prefix tricks, drives, UNC, ADS, 8.3, junctions) and outside-workspace approvals
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
@@ -156,7 +159,7 @@ def count_lines(path: Annotated[str, "File to count"]) -> str:
 ```
 
 - `risk`: `Risk.READ` runs without asking. `WRITE`, `EXEC` and `NETWORK` ask the approver first.
-- `paths=("path",)`: names the parameters that are file paths (each must be a `str`). The core resolves them against the workspace before the tool runs, asks separately for a path outside it, and passes the tool the resolved absolute path. Do not check paths inside the tool.
+- `paths=("path",)`: names the parameters that are file paths (each must be a `str`, or `str | None` when optional). The core resolves them against the workspace before the tool runs, asks separately for a path outside it, and passes the tool the resolved absolute path. Do not check paths inside the tool.
 - For risky tools, add `approval_title=` (a function returning the question, for example `"Write 12 chars to 'a.txt'"`) and `preview=` (a function returning a `Preview` shown before approval). Both receive the tool's arguments by name. `denied_message=` is what the model receives when the user says no.
 - A tool that needs a limit from the settings declares `context: ToolContext` as a parameter (from `local_agent.tools.registry`). The core fills it in; the model never sees it. `ToolContext.command_timeout_s` and `ToolContext.max_output_chars` are the current values.
 - Supported parameter types: `str`, `int`, `float`, `bool`, `list[T]`, `dict`, and `X | None` for optional parameters. Parameters without a default are required. Use `Annotated[str, "description"]` to describe a parameter.
@@ -176,6 +179,7 @@ The loop takes the Ollama client as a parameter (`run_turn(messages, client=...)
 
 The agent works in one folder, the **workspace**: the folder you start it from, or the one `--cwd` / `workspace` names. What it can do there:
 
+- **Read tools** (`read_file`, `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`) run without a question, but their paths are sandboxed too. `glob` and `grep` do not return or read anything reached through a junction or symlink that leads out of the folder they start from, and skip `.git`. `grep` also skips binary files. `git_*` run `git` in the workspace with a 30 s timeout. They never run commands from the repo's own config (fsmonitor, textconv, hooks are turned off). They do not look above the workspace, so a workspace that is a subfolder of a bigger repo says it is not a repository. Outside a repository they say so.
 - **File tools** (`read_file`, `write_file`) resolve every path against the workspace, not the process folder. A path inside the workspace runs without an extra question. A path outside it (`..\other`, an absolute path, a junction or symlink that leads out, a short 8.3 name of such a folder, a UNC path, another drive) gets its own prompt: `[OUTSIDE WORKSPACE] ... Allow read_file to access 'C:\...', which is outside the workspace ...`. Answer `y` only if you expect it. A write outside the workspace asks twice, once for the location and once for the write. With no answer of `y` (or no terminal to ask at) the tool does not run, and the model is told why.
 - **Refused without asking**: names that Windows would read as something else. These are alternate data streams (`file.txt:stream`), names ending in a dot or space (Windows drops them, so `jn.` can open the junction `jn`), reserved device names (`NUL`, `CON`, `COM1`, `LPT1`, with or without an extension), the device namespace (`\\.\...`), and empty paths or paths with a NUL character. The model is told the path was refused.
 - **`run_command` is not sandboxed by path.** It starts in the workspace (`cwd`), but a shell command can name any file on the machine, and Windows applies its own rules to it. Every command asks first, so read each one before answering `y`.

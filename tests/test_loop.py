@@ -20,7 +20,8 @@ from local_agent.core.events import (
     Usage,
 )
 from local_agent.permissions import Risk
-from local_agent.tools import builtin, tool
+from local_agent.tools import tool
+from local_agent.tools.output import truncate
 
 
 def start(user_text: str) -> list:
@@ -164,10 +165,10 @@ def test_tool_call_event_carries_kind_and_arguments(fake_ollama, tmp_path):
 def test_truncate_boundary():
     limit = DEFAULT_MAX_OUTPUT_CHARS
     exact = "x" * limit
-    assert builtin._truncate(exact, limit) == exact
+    assert truncate(exact, limit) == exact
 
     over = "x" * (limit + 1)
-    assert builtin._truncate(over, limit) == "x" * limit + "\n...[truncated 1 chars]"
+    assert truncate(over, limit) == "x" * limit + "\n...[truncated 1 chars]"
 
 
 # --- settings, num_ctx, token usage, thinking ------------------------------------

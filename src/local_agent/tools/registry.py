@@ -99,6 +99,15 @@ def _type_schema(hint: Any) -> dict:
     raise TypeError(f"unsupported parameter type for tool schema: {hint!r}")
 
 
+def _is_path_type(hint: Any) -> bool:
+    """True for `str` and `str | None` (optional path), with or without Annotated."""
+    base = _strip_annotated(hint)[0]
+    if get_origin(base) in (Union, types.UnionType):
+        args = [a for a in get_args(base) if a is not type(None)]
+        return len(args) == 1 and args[0] is str
+    return base is str
+
+
 def _takes_context(fn: Callable[..., Any]) -> bool:
     """True if the function has a `context: ToolContext` parameter."""
     hints = get_type_hints(fn)
@@ -211,7 +220,8 @@ def tool(
 
     `approval_title` and `preview` receive the same keyword arguments as the tool.
     `denied_message` is what the model receives when the user says no.
-    `paths` names the parameters that are file paths (each must be a `str` parameter).
+    `paths` names the parameters that are file paths (each must be `str`, or `str | None` for an
+    optional path; an absent or null optional path is not resolved, so the tool sees None).
     `registry` defaults to REGISTRY; tests pass their own dict.
     """
     risk = Risk(risk)
@@ -228,8 +238,8 @@ def tool(
         for arg in paths:
             if arg not in hints:
                 raise TypeError(f"tool {name!r}: paths names {arg!r}, which is not a parameter")
-            if _strip_annotated(hints[arg])[0] is not str:
-                raise TypeError(f"tool {name!r}: path parameter {arg!r} must be str")
+            if not _is_path_type(hints[arg]):
+                raise TypeError(f"tool {name!r}: path parameter {arg!r} must be str or str | None")
         table[name] = Tool(
             name=name,
             description=description,
