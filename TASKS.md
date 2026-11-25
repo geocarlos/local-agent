@@ -74,7 +74,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Load tools from a per-user tools directory and from Python entry points.
 - **Done when:** a sample plugin is loaded in tests; adding a tool is one decorated function plus a test.
 
-## ☑️ M2: standalone Windows app
+## ✅ M2: standalone Windows app
 
 ### ✅ T11 Subcommands and stdio server: `done`
 - `local-agent` (chat), `local-agent serve --stdio` (JSON-lines event protocol), `local-agent gui` (placeholder until T18); `--model`, `--cwd` flags.
@@ -86,7 +86,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - `packaging/` spec for an `--onedir` build; a script that builds it.
 - **Done when:** the built `local-agent.exe` runs chat and `serve --stdio` from a folder outside the repo.
 
-### T13 Machine-wide installer: `in review` (manual second-account check pending)
+### ✅ T13 Machine-wide installer: `done`
 - **Verify first:** where Windows Ollama installs and stores models (per user or per machine).
 - Inno Setup script: admin install to `C:\Program Files\local-agent\`, adds it to the machine PATH, clean uninstall removes it from PATH.
 - All state (config, logs, sessions) in `%APPDATA%\local-agent` per user; nothing written to the install dir.
@@ -432,7 +432,9 @@ Findings from **verify** items and follow-ups go here, by task id.
 - **Not verified:**
   - The installer was **not run**: it needs admin and changes the machine PATH, and that is the user's check.
   - Whether `RegQueryStringValue` returns a `REG_EXPAND_SZ` value unexpanded is **not proven by the Inno docs**. The code relies on it: it writes the value back with `RegWriteExpandStringValue`, so `%VAR%` entries stay as they are only if the read is raw. The raw-registry comparison in the manual check (steps 2.0, 2.5 and 5.4, using `DoNotExpandEnvironmentNames`) is the confirmation. Not marked verified until that check passes.
-  - Second Windows account, install, PATH after reboot and uninstall: all pending the user (`docs/manual-checks/T13-second-account.md`, status pending).
+  - **Manual check done by the user (2026-11-25):** installed as admin; `local-agent` on the machine PATH; chat worked in account A; a second account (`gratio`) ran `local-agent` from the PATH and reached account A's Ollama on 11434; uninstall removed the folder and the PATH entry. Results in `docs/manual-checks/T13-second-account.md`.
+  - Still not verified: the raw (unexpanded) PATH comparison, so whether `RegQueryStringValue` preserves `%VAR%` entries is unproven (this machine's PATH is REG_SZ with no `%` entries, so nothing was at risk here).
+  - Found: the Ollama installer adds `ollama` to the installing user's PATH only. Other accounts don't need it for local-agent (HTTP on 11434); README could say how to add it per user.
   - Ollama with two accounts (port, shared server, `OLLAMA_MODELS`): not tested.
 - **Follow-ups:**
   - Ollama on this machine listens on `0.0.0.0:11434`; the user should check the firewall, or set `OLLAMA_HOST=127.0.0.1:11434` and restart. Not changed.

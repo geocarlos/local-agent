@@ -1,6 +1,6 @@
 # T13 manual check: machine-wide install and a second Windows account
 
-Status: **pending** (not run by the implementer). Record the results in the checklist at the end.
+Status: **done 2026-11-25** (run by the user; results below as the user reported them).
 
 This check needs two Windows accounts on one computer: account A (your usual one) and account B (a second local or Microsoft account). It needs an administrator for the install. Do not run the installer from an account without admin rights.
 
@@ -145,20 +145,20 @@ Expected: the last line is `Built ...\dist\installer\local-agent-0.1.0-setup.exe
 
 Fill in each line with `[x]` (pass), `[ ]` (not done) or `FAIL` with a note.
 
-- [ ] 1. Build prints `Built ...local-agent-0.1.0-setup.exe` (or the existing exe was used, noted).
-- [ ] 2.0 Raw machine PATH and its kind saved to `path-before.txt` before the install. Kind: ______
-- [ ] 2.1 The installer runs elevated and installs to `C:\Program Files\local-agent`.
-- [ ] 2.3 `local-agent.exe` exists in that folder.
-- [ ] 2.4 The machine PATH contains `C:\Program Files\local-agent` exactly once.
-- [ ] 2.5 Raw machine PATH after install: the entry is there and the other entries are unchanged, including any `%...%` text. Kind after install: ______
-- [ ] 3.2 Account A, new terminal: `where.exe local-agent` shows the install folder; `local-agent --help` exits 0.
-- [ ] 3.3 Account A chat: a reply streams from Ollama (or "skipped (4.3 passed)").
-- [ ] 4.2 Account B, new terminal: `where.exe local-agent` shows the same folder; `--help` exits 0.
-- [ ] 4.3 Account B: `curl.exe http://127.0.0.1:11434/api/tags` returns JSON; a reply streams from `local-agent` with the default host (note: started by A, started by B, or skipped; host used: ______).
-- [ ] 4.4 `$env:APPDATA` differs between A and B, and B's state is not in A's folder.
-- [ ] 5.2 After uninstall, `C:\Program Files\local-agent` is gone.
-- [ ] 5.3 After sign-out/in or reboot, no PATH entry for local-agent; `where.exe local-agent` finds nothing.
-- [ ] 5.4 Raw PATH after uninstall equals the value saved in 2.0 (`True`). Kind after uninstall: ______ (`ExpandString` is harmless).
+- [x] 1. Build prints `Built ...local-agent-0.1.0-setup.exe` (or the existing exe was used, noted).
+- [ ] 2.0 Raw machine PATH saved before the install: not done (the installer was run before this step).
+- [x] 2.1 The installer runs elevated and installs to `C:\Program Files\local-agent`.
+- [x] 2.3 `local-agent.exe` exists in that folder.
+- [x] 2.4 The machine PATH contains `C:\Program Files\local-agent` exactly once.
+- [ ] 2.5 Raw (unexpanded) PATH comparison: not done; the user confirmed the entry was added.
+- [x] 3.2 Account A, new terminal: `where.exe local-agent` shows the install folder; `local-agent --help` exits 0.
+- [x] 3.3 Account A chat: `qwen2.5-coder:7b` wrote a prime-number function. (`qwen3-vl:8b` gave no reply; the machine was under heavy load.)
+- [x] 4.2 Account B, new terminal: `where.exe local-agent` shows the same folder; `--help` exits 0.
+- [x] 4.3 Account B (`gratio`): `local-agent` ran and got a model reply from account A's Ollama on the default host. `ollama` itself is not on B's PATH (the Ollama installer adds it per user); not needed by local-agent.
+- [ ] 4.4 (not reported) `$env:APPDATA` differs between A and B, and B's state is not in A's folder.
+- [x] 5.2 After uninstall, `C:\Program Files\local-agent` is gone.
+- [x] 5.3 After sign-out/in or reboot, no PATH entry for local-agent; `where.exe local-agent` finds nothing.
+- [ ] 5.4 Raw PATH equality: not checked (no saved raw value); the user confirmed the entry was removed.
 
 Notes (what you saw, error text, the Ollama address used, Windows version):
 
