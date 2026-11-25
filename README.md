@@ -35,6 +35,54 @@ A small command-line coding assistant that runs entirely on local models through
 uv sync
 ```
 
+## Install (Windows)
+
+The installer puts `local-agent` in `C:\Program Files\local-agent\` and adds that folder to the machine PATH, so every account on the computer can run it.
+
+1. Download `local-agent-<version>-setup.exe` (or build it, see [Building the installer](#building-the-installer)).
+2. Run it as an administrator (it asks for elevation; it needs admin rights to write to Program Files and the machine PATH). It is 64-bit only. The installer is unsigned, so SmartScreen will warn: choose **More info**, then **Run anyway**.
+3. Close all terminals (including Windows Terminal and VS Code) and start a fresh one from the Start menu, or sign out and back in (terminals that were already open do not see the PATH change). Then check:
+
+   ```powershell
+   local-agent --help
+   ```
+
+To uninstall, use **Settings > Apps > Installed apps** (or Apps & features) and choose local-agent. The uninstaller removes its PATH entry and the install folder. It does not remove anyone's `%APPDATA%\local-agent` folder, which holds config and plugins (delete it by hand if you want that gone).
+
+The installer creates nothing under any user profile. It does not change Ollama.
+
+## Multiple Windows accounts
+
+One install serves every account on the machine. What is per account and what is shared:
+
+- **The program:** shared, in `C:\Program Files\local-agent\`.
+- **Config and plugins:** per account, under that account's `%APPDATA%\local-agent\` (`config.toml`, and a `tools` folder for plugins). Each account has its own settings and plugins; changing one does not change another.
+- **MCP server logs:** per account, in that account's `%TEMP%` (a temp file per server, from `tempfile`), not under `%APPDATA%\local-agent`.
+- **Workspace:** whatever folder the account runs in (`--cwd`, or the current folder). The tools can only touch files inside it, unless you approve more.
+- **Ollama:** the server is one process per port, not per account (see below).
+
+### Ollama and several accounts
+
+What is verified and what is not:
+
+- **Install (docs):** Ollama's Windows installer is per user and needs no administrator (docs.ollama.com/windows, read 2026-11-25). **On this machine** Ollama 0.40.18 is installed in `C:\Program Files\Ollama\` (its uninstall entry is in the current user's registry hive), not the per-user default. So it may be installed differently on another machine.
+- **Models folder (docs and this machine):** the default is `%USERPROFILE%\.ollama\models` for the account that runs the server. Set the user environment variable `OLLAMA_MODELS` to change it. **On this machine** the server runs with `OLLAMA_MODELS=E:\.ollama\models` (from its server log); the models are on E:, and `C:\Users\geocarlos\.ollama\models` exists but is empty. The source of that variable was not found in the user or machine environment, so it was not traced.
+- **Address (docs and this machine):** the docs (FAQ) say Ollama binds `127.0.0.1:11434` by default. **On this machine** the running server listens on `0.0.0.0:11434` and `[::]:11434` (its log shows `OLLAMA_HOST=http://0.0.0.0:11434`), so it is reachable from the network unless the firewall blocks it. Check `netstat -ano | findstr 11434` on your machine. To keep it local, set `OLLAMA_HOST=127.0.0.1:11434` and restart Ollama.
+- **Port 11434 (not verified with two accounts):** one server can bind the port at a time. A second account that starts its own `ollama serve` while the first one runs should fail to bind; the docs do not say so, and this was not tested with two accounts.
+- **Other accounts (not verified):** a server started by one account listens on the port for every account on the machine, so another account can reach it at `http://127.0.0.1:11434`, and then uses that server's models. The second account should not start a second server. It should either use the running server (leave `host` at the default, or set `OLLAMA_HOST`), or stop the server and run its own with its own `OLLAMA_MODELS`.
+
+To share one models folder between accounts, set `OLLAMA_MODELS` to one folder (for example `E:\.ollama\models`). The simplest way is a machine-level (System) variable set by an administrator, because Ollama on Windows inherits the user and system environment variables. The alternative is the user variable in each account that runs Ollama. Restart Ollama after changing it. Accounts that only use a running server do not need it.
+
+Notes on a shared folder (not verified on this machine with two accounts):
+- Each account that runs a server and pulls models needs Modify rights on the shared folder. Read-only is enough for an account that never pulls.
+- Avoid two servers writing to the same folder at the same time.
+- A server started by account A stops when A signs out, so account B depends on A staying signed in while B uses that server.
+- Account B's Ollama tray app may start automatically and fail to bind port 11434 while A's server runs. This is expected from the port rule above, but not observed.
+
+If Ollama is not reachable from an account, `local-agent` prints the usual message and keeps the prompt: start Ollama from that account, or set `host` (or `OLLAMA_HOST`) to the address of the server that is running.
+
+Manual check for a second account: [docs/manual-checks/T13-second-account.md](docs/manual-checks/T13-second-account.md).
+
 ## Usage
 
 ```sh
@@ -396,6 +444,20 @@ Limitations of the built app:
 - **Ollama is not included.** It must run as before (see Requirements).
 - **Not signed.** Windows SmartScreen and Defender may warn about an unsigned executable.
 - **State stays per user.** Config, plugins and temp files go to the per-user folders (`%APPDATA%\local-agent`, the system temp folder for MCP stderr). Nothing is written next to the exe.
+
+## Building the installer
+
+`packaging\build-installer.ps1` makes `dist\installer\local-agent-<version>-setup.exe` from the T12 build. It builds `dist\local-agent\` first only if that exe is missing (`-Rebuild` forces it), then compiles `packaging\local-agent.iss` with Inno Setup 6. The version comes from `pyproject.toml`. When it reuses an existing `dist\local-agent\`, it prints the exe's build time and warns if any file under `src\` is newer; run it with `-Rebuild` in that case.
+
+Inno Setup 6 is needed (`ISCC.exe`). The script looks for it in `%ProgramFiles(x86)%\Inno Setup 6\`, `%ProgramFiles%\Inno Setup 6\`, `%LOCALAPPDATA%\Programs\Inno Setup 6\` and on PATH. If it is not found, the script stops and says how to install it:
+
+```powershell
+winget install --id JRSoftware.InnoSetup -e
+```
+
+```powershell
+packaging\build-installer.ps1
+```
 
 ## Development
 
