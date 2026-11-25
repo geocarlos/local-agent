@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+# Two runs for the same ref (e.g. a re-pushed tag) queue instead of racing to publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   # Use only uv-managed Pythons (python-build-standalone), never a conda or system Python. This is the
   # Python that the frozen build bundles, so the build does not depend on the runner's Python.
@@ -111,7 +116,7 @@ jobs:
               (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
           ) | Where-Object { Test-Path $_ }
           if ($Found) {
-              Write-Host "Inno Setup is already installed: $($Found[0])"
+              Write-Host "Inno Setup is already installed: $(@($Found)[0])"
           } else {
               choco install innosetup --version=6.7.1 -y --no-progress
               if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }

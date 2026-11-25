@@ -93,7 +93,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - README section on multi-account use and Ollama per user / `OLLAMA_MODELS` / port 11434.
 - **Done when:** a second Windows account can run `local-agent` from any terminal after one install (manual check, documented steps).
 
-### T14 Release CI: `todo`
+### ✅ T14 Release CI: `done`
 - GitHub Actions builds the exe and installer on tag push and attaches them to a GitHub Release.
 - **Done when:** workflow is valid (lint/dry-run) and documented.
 
@@ -386,7 +386,7 @@ Findings from **verify** items and follow-ups go here, by task id.
 - **`sys.executable` (checked):** `src/` does not use it (grep). MCP servers start from the configured `command`, so the frozen app does not need a Python. Only the tests use `sys.executable`, and they run from source.
 - **State (verified):** config, plugins and MCP stderr go to the per-user folders (`%APPDATA%\local-agent`, the system temp folder). After the manual runs the `dist` folder was byte-for-byte unchanged, and `%APPDATA%\local-agent` was not created.
 - **Size and time (measured, this machine):** `dist/local-agent` is 47.4 MiB in 166 files (49,677,697 bytes). `local-agent.exe` is 11.2 MB. `packaging/build.ps1` took 32.1 s including `uv sync --locked`, with `--clean`.
-- **Test (decided):** `tests/test_frozen_exe.py` runs `--help` from a temp folder, and a `serve --stdio` initialize round-trip with a temp empty `--config`, `--no-plugins` and an unreachable host. Every stdout line must be JSON, and EOF must give exit 0. It is skipped unless `LOCAL_AGENT_EXE` names an exe or `dist/local-agent/local-agent.exe` exists. Normal `uv run pytest` builds nothing. It is not in CI (T14). Results: `uv run pytest -q` with `dist/` present gives 723 passed, 1 skipped (the two exe tests run); with the exe hidden (`LOCAL_AGENT_EXE` pointing nowhere) the two exe tests are skipped. `uv lock --check` exits 0.
+- **Test (decided):** `tests/test_frozen_exe.py` runs `--help` from a temp folder, and a `serve --stdio` initialize round-trip with a temp empty `--config`, `--no-plugins` and an unreachable host. Every stdout line must be JSON, and EOF must give exit 0. It is skipped unless `LOCAL_AGENT_EXE` names an exe or `dist/local-agent/local-agent.exe` exists. Normal `uv run pytest` builds nothing. The release workflow (T14) runs them against the CI build. Results: `uv run pytest -q` with `dist/` present gives 723 passed, 1 skipped (the two exe tests run); with the exe hidden (`LOCAL_AGENT_EXE` pointing nowhere) the two exe tests are skipped. `uv lock --check` exits 0.
 - **EOF fix (fix round, source and exe):** at end of input the REPL used to raise an unhandled `EOFError` and exit 1. Now the prompt treats EOF like `exit` (exit 0, same cleanup), and an approval prompt that gets EOF refuses the tool (`reject_once`), so the turn finishes and the REPL then exits 0. Tests: `tests/test_cli.py` (EOF at an approval, the turn after it, the prompt, and piped empty stdin in a subprocess).
 - **Verified (manual, Windows 11, Python 3.14.10 build; copy in a scratch folder outside the repo, run from another cwd with `--cwd` set to a scratch workspace):**
   - `local-agent.exe --help` and `serve --help`: exit 0.
@@ -455,13 +455,14 @@ Findings from **verify** items and follow-ups go here, by task id.
   - `uv run pytest tests/test_release_workflow.py`: 19 passed. It checks the triggers, the path filter, the permissions (only `publish` writes), the publish condition, the tag check, the artifact names, the release flags, that no `${{` is in a run block, and that every `uses:` is pinned to a 40-hex SHA.
   - `packaging/smoke-exe.ps1` run against the T12 exe on this machine (conda Python): `--help` ok; the plugin loaded; `sqlite3` FAIL (`_sqlite3` DLL not found, the known conda issue), `ctypes`, `bz2`, `lzma` warnings, the other modules ok. The script exits 1 here, as designed. The uv build was not run here.
   - `uv run pytest -q`: 791 passed, 1 skipped (baseline 772, plus the 19 new tests). `uv lock --check` exits 0.
+- **Dry run on GitHub (PR #9, Release run 45702775073, reviewed):** the build job passed in 2m25s, every step green; publish was skipped as intended. Python was uv-managed cpython-3.14.10 and PyInstaller bundled its `python314.dll`. pytest 790 passed, 2 skipped; frozen-exe tests 2 passed. Smoke: `sqlite3`, `ctypes`, `bz2` and `lzma` all import in a plugin, so the T12 DLL gap was conda-only and does not affect release builds. Sizes: app folder 51.9 MB, installer 22.8 MB, zip 25.9 MB. Inno Setup 6.7.1 is preinstalled on `windows-latest` (`C:\Program Files (x86)\Inno Setup 6\ISCC.exe`). `SHA256SUMS.txt` is `sha256sum -c` compatible (LF, no BOM).
+- **Review nits fixed:** the "already installed" log line printed only the first character of the path (`@($Found)[0]` now); a workflow-level `concurrency` group per ref queues runs for the same tag instead of racing.
 - **Not verified:**
-  - The workflow has not run on GitHub. The first real run is the pull request for this branch (it changes `.github/workflows/release.yml`, so the `pull_request` trigger runs the dry run). A tag push, the publish job and `gh release create` have not run.
-  - The uv-managed Python 3.14 build and its bundled DLLs (`sqlite3`, `ctypes`, `bz2`, `lzma`). The smoke step will show this in CI.
-  - `choco install innosetup --version=6.7.1` on the runner, and the `ISCC.exe` discovery after it. Not run here (no install on this machine).
-  - The zip, `SHA256SUMS.txt` and the upload steps were not run end to end. The packaging code was not run in full; only the smoke script was run, against the existing `dist`.
+  - A tag push, the publish job and `gh release create` have not run (no tag was pushed). Re-running publish after the release exists fails with "already exists"; delete the release first (README).
+  - The `choco install innosetup --version=6.7.1` branch: the runner already has Inno Setup, so it did not run.
 - **Follow-ups:**
   - Code signing (Authenticode) for the exe and the installer, which SmartScreen needs. Needs a certificate and a secret; not in this task.
   - `.github/workflows/ci.yml` still pins actions by tag (`@v4`, `@v6`). Pin it the same way, and consider Dependabot for action pins.
-  - If CI shows `sqlite3` failing on the uv build, the spec needs the DLLs collected (T12 follow-up); the `ctypes`, `bz2` and `lzma` warnings stay optional until then.
+  - `ctypes`, `bz2` and `lzma` passed on the uv build; they could be made required in the smoke gate.
+  - The `astral-sh/setup-uv` pin comment says `# v6`; the pinned commit is tag v6.8.0.
   - Release notes are generated from PR titles (`--generate-notes`). No CHANGELOG file.
