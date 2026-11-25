@@ -76,6 +76,7 @@ PERMISSION_LABELS = {
 _POLL_S = 0.05
 # One deadline, shared by all running turns, for shutdown to wait for them after their cancel is set.
 SHUTDOWN_DEADLINE_S = 10.0
+PROBE_JOIN_S = 5.0  # at shutdown, how long to wait for the startup model check to report
 # At most this many sessions per server process. A session/new beyond it gets -32600.
 MAX_SESSIONS = 64
 # A line longer than this (in characters, 16 MiB of text) is refused with -32600 and discarded.
@@ -558,6 +559,7 @@ def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str]
         with contextlib.redirect_stdout(errors):
             plugin_runtime = None
             mcp = None
+            probe_thread = None
             try:
                 plugin_runtime = plugins.load_plugins(settings)
                 mcp = mcp_tools.start_mcp_servers(settings.mcp_servers, timeout_s=settings.command_timeout_s)
@@ -567,13 +569,16 @@ def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str]
                 if summary is not None:
                     log(summary)
                 # The model check runs beside the server, so a slow or unreachable Ollama cannot delay initialize.
-                threading.Thread(target=_probe_in_background, args=(client, settings, log),
-                                 name="startup-probe", daemon=True).start()
+                probe_thread = threading.Thread(target=_probe_in_background, args=(client, settings, log),
+                                                name="startup-probe", daemon=True)
+                probe_thread.start()
                 server = StdioServer(settings, client=client, reader=reader, writer=writer, log=log)
                 server.serve()
             except KeyboardInterrupt:  # Ctrl+C ends the server like EOF does
                 pass
             finally:
+                if probe_thread is not None:  # let a quick model check finish, so its warning is not lost
+                    probe_thread.join(PROBE_JOIN_S)
                 if mcp is not None:
                     mcp.close()
                 if plugin_runtime is not None:
