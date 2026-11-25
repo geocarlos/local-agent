@@ -35,6 +35,7 @@ from local_agent import sandbox, tools
 from local_agent.config import Settings
 from local_agent.core.events import (
     ApprovalRequest,
+    Decision,
     Error,
     EventSink,
     TextDelta,
@@ -48,7 +49,7 @@ from local_agent.core.events import (
 )
 from local_agent.core.model import OLLAMA_ERRORS, describe_error
 from local_agent.core.toolcalls import parse_text_tool_calls
-from local_agent.permissions import Approver, DenyAll, needs_approval
+from local_agent.permissions import Approver, DenyAll, SessionApprovals, needs_approval
 from local_agent.tools import Location, Tool
 from local_agent.tools.registry import ToolContext
 
@@ -95,6 +96,7 @@ def run_turn(
     emit: EventSink = discard,
     approver: Approver | None = None,
     cancel: threading.Event | None = None,
+    session: SessionApprovals | None = None,
 ) -> str | None:
     """Run one user turn. `messages` must already end with the user message.
 
@@ -106,15 +108,20 @@ def run_turn(
     client for `settings.host`. Returns the final reply text, or None if the
     turn hit the round cap, was cancelled, or failed (an Error event is emitted
     for failures).
+
+    `session` holds the "allow always for this session" answers. A frontend keeps one
+    object for the whole session and passes it to every turn; without one, the
+    allowances last only for this call.
     """
     settings = Settings() if settings is None else settings
     if client is None:
         client = ollama.Client(host=settings.host)
     approver = approver or DenyAll()
     cancel = cancel if cancel is not None else threading.Event()
+    session = session if session is not None else SessionApprovals()
     usage = _Usage()
     try:
-        return _run_rounds(messages, client, settings, emit, approver, cancel, usage)
+        return _run_rounds(messages, client, settings, emit, approver, cancel, usage, session)
     except KeyboardInterrupt:
         # Ctrl+C outside the guarded steps (for example while an event is being printed).
         # Keep the invariant even so, then end the turn as cancelled.
@@ -135,10 +142,12 @@ def _run_rounds(
     approver: Approver,
     cancel: threading.Event,
     usage: _Usage,
+    session: SessionApprovals,
 ) -> str | None:
     tool_context = ToolContext(command_timeout_s=settings.command_timeout_s,
                                max_output_chars=settings.max_output_chars,
-                               workspace=settings.workspace)
+                               workspace=settings.workspace,
+                               test_command=settings.test_command)
     for round_no in range(1, settings.max_tool_rounds + 1):
         if cancel.is_set():
             emit(TurnDone(stop_reason="cancelled", text=None, rounds=round_no - 1, usage=usage.value()))
@@ -165,7 +174,8 @@ def _run_rounds(
             return text
 
         # Execute each requested tool and feed results back to the model.
-        if _run_calls(calls, round_no, messages, emit, approver, cancel, tool_context, settings.workspace):
+        if _run_calls(calls, round_no, messages, emit, approver, cancel, tool_context, settings.workspace,
+                      session):
             emit(TurnDone(stop_reason="cancelled", text=None, rounds=round_no, usage=usage.value()))
             return None
 
@@ -240,6 +250,7 @@ def _run_calls(
     cancel: threading.Event,
     tool_context: ToolContext,
     workspace: Path,
+    session: SessionApprovals,
 ) -> bool:
     """Run the tool calls of one reply. Returns True if the turn was cancelled.
 
@@ -258,7 +269,7 @@ def _run_calls(
         else:
             try:
                 content, status = _run_tool(tool, name, call_id, args, emit, approver, tool_context,
-                                            workspace)
+                                            workspace, session)
             except KeyboardInterrupt:  # Ctrl+C at an approval prompt or while a tool runs
                 cancel.set()
                 content, status = CANCELLED_MESSAGE, "failed"
@@ -297,12 +308,17 @@ def _run_tool(
     approver: Approver,
     tool_context: ToolContext,
     workspace: Path,
+    session: SessionApprovals,
 ) -> tuple[str, ToolStatus]:
     """Run one tool call after the sandbox and approval policy. Failures come back as text for the model.
 
     Order: bind the arguments; resolve the path arguments (refused paths stop here, unasked);
-    ask for each path outside the workspace; ask for the tool's own risk; then run with the
-    resolved paths.
+    ask for each path outside the workspace; run the tool's precheck (a call that cannot
+    succeed is answered here, before the tool's own question); ask for the tool's own risk
+    unless the session allows this tool in this workspace; then run with the resolved paths.
+
+    The outside-workspace question is never skipped by a session allowance, and it comes
+    before the precheck, because the precheck reads the file.
     """
     if tool is None:
         return f"Unknown tool: {name}", "failed"
@@ -317,22 +333,41 @@ def _run_tool(
             return f"Refused: {e}.", "failed"
         for item in outside:
             request = sandbox.outside_request(call_id, tool.name, tool.risk.value, item, workspace)
-            if not _approved(request, emit, approver):
+            if not _ask(request, emit, approver).allowed:
                 return sandbox.outside_denied_message(item, workspace), "failed"
-        if needs_approval(tool.risk):
-            request = tool.approval_request(call_id, args)
-            if not _approved(request, emit, approver):
+        problem = tool.precheck(args, tool_context)
+        if problem is not None:
+            return problem, "failed"
+        may_stay = tool.session_allowed_for(args, tool_context)
+        if needs_approval(tool.risk) and not (may_stay and session.allows(tool.name, workspace)):
+            request = tool.approval_request(call_id, args, tool_context)
+            decision = _ask(request, emit, approver)
+            if not decision.allowed:
                 return tool.denied_message, "failed"
+            if decision is Decision.ALLOW_ALWAYS and "allow_always" in request.options:
+                session.allow(tool.name, workspace)
         return tool.call(args, tool_context), "completed"
     except Exception as e:
         return f"Error calling {name} with arguments {args}: {type(e).__name__}: {e}", "failed"
 
 
-def _approved(request: ApprovalRequest, emit: EventSink, approver: Approver) -> bool:
-    """Show the request to the sink, then ask the approver. An approver that fails has approved nothing."""
+def _ask(request: ApprovalRequest, emit: EventSink, approver: Approver) -> Decision:
+    """Show the request to the sink, then ask the approver. Anything but a known answer refuses.
+
+    An approver that raises has approved nothing. An "allow always" answer to a request that does not
+    offer it counts as allow once.
+    """
     emit(request)
     try:
-        decision = approver.decide(request)
+        answer = approver.decide(request)
     except Exception:
-        return False
-    return decision.allowed
+        return Decision.REJECT_ONCE
+    if not isinstance(answer, str):  # None, a bool or a number is not an answer: refused
+        return Decision.REJECT_ONCE
+    try:
+        decision = Decision(answer)
+    except ValueError:  # a string that is not a known answer is refused
+        return Decision.REJECT_ONCE
+    if decision is Decision.ALLOW_ALWAYS and "allow_always" not in request.options:
+        return Decision.ALLOW_ONCE
+    return decision

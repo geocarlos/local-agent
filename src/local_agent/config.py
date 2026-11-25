@@ -47,6 +47,8 @@ class Settings:
     max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS
     command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S
+    # The command run_tests uses when it is not given one (None: detect from the workspace).
+    test_command: str | None = None
     # Relative tool paths resolve against it, and paths outside it need approval (see sandbox.py).
     workspace: Path = field(default_factory=Path.cwd)
 
@@ -132,6 +134,10 @@ def _check(key: str, value: Any, *, source: str, base: Path | None = None) -> An
         return _int_at_least(key, value, 1, source)
     if key == "command_timeout_s":
         return _int_at_least(key, value, 1, source)
+    if key == "test_command":
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"{source} must be a non-empty command line, got {value!r}")
+        return value.strip()
     if key == "workspace":
         return _directory(value, source, base)
     raise ConfigError(f"unknown setting {key!r}")

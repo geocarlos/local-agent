@@ -278,3 +278,88 @@ def test_a_turn_with_a_reply_keeps_its_user_message(fake_ollama, monkeypatch):
 
     user_texts = [m["content"] for m in client.calls[1]["messages"] if m["role"] == "user"]
     assert user_texts == ["one", "two"]
+
+def request_offering_always(title="Write 2 chars to 'a.txt'") -> ApprovalRequest:
+    return ApprovalRequest(tool_call_id="1.1", tool_name="write_file", risk="write", title=title,
+                           options=("allow_once", "allow_always", "reject_once"))
+
+
+@pytest.mark.parametrize("answer", ["a", "A", "always"])
+def test_a_allows_for_the_session_when_it_is_offered(monkeypatch, answer):
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or answer)
+
+    assert cli.TerminalApprover().decide(request_offering_always()) is Decision.ALLOW_ALWAYS
+    assert prompts == ["\n[APPROVE] Write 2 chars to 'a.txt'? [y]es / [a]lways for this session / [n]o: "]
+
+
+def test_y_is_allow_once_when_always_is_offered(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    assert cli.TerminalApprover().decide(request_offering_always()) is Decision.ALLOW_ONCE
+
+
+@pytest.mark.parametrize("answer", ["n", "", "no"])
+def test_anything_else_is_refused_when_always_is_offered(monkeypatch, answer):
+    monkeypatch.setattr("builtins.input", lambda prompt="": answer)
+
+    assert cli.TerminalApprover().decide(request_offering_always()) is Decision.REJECT_ONCE
+
+
+def test_a_is_refused_when_always_is_not_offered(monkeypatch):
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or "a")
+
+    assert cli.TerminalApprover().decide(request_for()) is Decision.REJECT_ONCE
+    assert prompts == ["\n[APPROVE] Write 2 chars to 'a.txt'? (y/n): "]
+
+
+def test_render_diff_preview_shows_the_changes_with_the_path(capsys):
+    cli.render(ApprovalRequest(
+        tool_call_id="1.1",
+        tool_name="edit_file",
+        risk="write",
+        title="Edit 'a.txt' (replace one occurrence)",
+        preview=Preview(text="-a\n+b\n", path="a.txt", kind="diff"),
+    ))
+
+    assert capsys.readouterr().out == "\n[PROPOSED CHANGES for 'a.txt']\n-a\n+b\n\n[END PROPOSED CHANGES]\n"
+
+
+def test_render_diff_preview_without_a_path_is_a_plain_summary(capsys):
+    cli.render(ApprovalRequest(
+        tool_call_id="1.1",
+        tool_name="git_commit",
+        risk="write",
+        title='Commit staged changes with message "m"',
+        preview=Preview(text="Message:\nm", kind="diff"),
+    ))
+
+    assert capsys.readouterr().out == "\n[PROPOSED CHANGES]\nMessage:\nm\n[END PROPOSED CHANGES]\n"
+
+
+def test_repl_a_allows_the_same_tool_for_the_rest_of_the_session(fake_ollama, monkeypatch, workspace, capsys):
+    first, second = workspace / "a.txt", workspace / "b.txt"
+    prompts = []
+    answers = iter(["write one", "a", "write two", "exit"])
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    client = fake_ollama([
+        tool_reply(("write_file", {"path": str(first), "content": "1"})),
+        text_reply("one saved"),
+        tool_reply(("write_file", {"path": str(second), "content": "2"})),
+        text_reply("two saved"),
+    ])
+
+    cli.run(client=client)
+
+    approvals = [p for p in prompts if "[APPROVE]" in p]
+    assert len(approvals) == 1
+    assert "[a]lways for this session" in approvals[0]
+    assert first.read_text(encoding="utf-8") == "1"
+    assert second.read_text(encoding="utf-8") == "2"
+    assert "Agent: two saved" in capsys.readouterr().out

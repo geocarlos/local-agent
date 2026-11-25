@@ -17,6 +17,14 @@ A tool that takes a file path names the parameter in `paths=`, for example
 `paths=("path",)`. The core resolves those arguments against the workspace before
 the tool runs, and asks for a separate approval if one is outside it
 (see local_agent.sandbox). The tool then receives the resolved absolute path.
+A path parameter may also be a list of paths (`list[str] | None`).
+
+Hooks for the approval step: `approval_title` and `preview` build the question and
+the preview; `precheck` returns an error text (or None) and runs before anything
+is asked, so a call that cannot succeed is answered without a question. `allow_always`
+(a bool, or a hook that returns a bool per call) says whether "allow for this session" is
+offered for a call. The hooks get the tool's arguments by name, and `context` too if they
+declare it.
 
 A tool function must not print or read input. Approval is handled by the
 core (see core/loop.py) through permissions.Approver.
@@ -28,22 +36,24 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Annotated, Union, get_args, get_origin, get_type_hints
+from typing import Any, Annotated, Literal, Union, get_args, get_origin, get_type_hints
 
 from local_agent.config import DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_MAX_OUTPUT_CHARS
-from local_agent.core.events import ApprovalRequest, Preview, ToolKind
+from local_agent.core.events import TOOL_APPROVAL_OPTIONS, ApprovalRequest, Preview, ToolKind
 from local_agent.permissions import Risk
 
 CONTEXT_PARAM = "context"
+ONE_TIME_OPTIONS = ("allow_once", "reject_once")  # offered when a call may not be allowed for the session
 
 
 @dataclass(frozen=True)
 class ToolContext:
-    """Limits and the workspace the core passes to a tool call, taken from the settings for the turn."""
+    """Limits, the workspace and test command the core passes to a tool call, taken from the settings for the turn."""
 
     command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS
     workspace: Path = field(default_factory=Path.cwd)  # where run_command starts
+    test_command: str | None = None                   # the configured test_command, if any
 
 
 class Location(StrEnum):
@@ -91,6 +101,8 @@ def _type_schema(hint: Any) -> dict:
         return {"type": "number"}
     if hint is str:
         return {"type": "string"}
+    if get_origin(hint) is Literal:
+        return {"type": "string", "enum": list(get_args(hint))}
     if hint is dict or get_origin(hint) is dict:
         return {"type": "object"}
     if hint is list or get_origin(hint) is list:
@@ -100,18 +112,29 @@ def _type_schema(hint: Any) -> dict:
 
 
 def _is_path_type(hint: Any) -> bool:
-    """True for `str` and `str | None` (optional path), with or without Annotated."""
+    """True for `str`, `str | None` (optional path), `list[str]` and `list[str] | None`, with or without Annotated."""
     base = _strip_annotated(hint)[0]
     if get_origin(base) in (Union, types.UnionType):
         args = [a for a in get_args(base) if a is not type(None)]
-        return len(args) == 1 and args[0] is str
-    return base is str
+        if len(args) != 1:
+            return False
+        base = args[0]
+    if base is str:
+        return True
+    return get_origin(base) is list and get_args(base) == (str,)
 
 
 def _takes_context(fn: Callable[..., Any]) -> bool:
     """True if the function has a `context: ToolContext` parameter."""
     hints = get_type_hints(fn)
     return hints.get(CONTEXT_PARAM) is ToolContext
+
+
+def _run_hook(fn: Callable[..., Any], arguments: Mapping[str, Any], context: ToolContext | None) -> Any:
+    """Call an approval hook (approval_title, preview, precheck) with the tool's arguments, and context if it takes one."""
+    if CONTEXT_PARAM in inspect.signature(fn).parameters:
+        return fn(**arguments, **{CONTEXT_PARAM: context or ToolContext()})
+    return fn(**arguments)
 
 
 def _parameters_schema(fn: Callable[..., Any]) -> dict:
@@ -146,6 +169,8 @@ class Tool:
     denied_message: str
     approval_title: Callable[..., str] | None
     preview: Callable[..., Preview | None] | None
+    precheck_hook: Callable[..., str | None] | None
+    allow_always: Callable[..., bool] | bool = True
     takes_context: bool = False
     path_args: tuple[str, ...] = ()
 
@@ -183,16 +208,39 @@ class Tool:
             inspect.signature(self.fn).bind(**self._full_arguments(arguments, context))
         except TypeError as e:
             raise TypeError(f"{self.name}() {e}") from None
+        # Literal parameters are enums in the schema; a value outside them is refused before the user is asked.
+        properties = self.parameters["properties"]
+        for name, value in arguments.items():
+            choices = properties.get(name, {}).get("enum")
+            if choices is not None and value is not None and value not in choices:
+                raise TypeError(f"{self.name}() argument {name!r} must be one of {choices}, got {value!r}")
 
     def call(self, arguments: Mapping[str, Any], context: ToolContext | None = None) -> str:
         """Run the tool. Raises on bad arguments or failures; the core turns that into a result."""
         return str(self.fn(**self._full_arguments(arguments, context)))
 
-    def approval_request(self, tool_call_id: str, arguments: Mapping[str, Any]) -> ApprovalRequest:
-        """What the user is asked before this call runs."""
+    def precheck(self, arguments: Mapping[str, Any], context: ToolContext | None = None) -> str | None:
+        """An error text if this call cannot succeed, so it is answered without asking; None to go on."""
+        if self.precheck_hook is None:
+            return None
+        return _run_hook(self.precheck_hook, dict(arguments), context)
+
+    def session_allowed_for(self, arguments: Mapping[str, Any], context: ToolContext | None = None) -> bool:
+        """Whether this call may be offered "allow for this session" and remembered when the user says so."""
+        if isinstance(self.allow_always, bool):
+            return self.allow_always
+        return bool(_run_hook(self.allow_always, dict(arguments), context))
+
+    def approval_request(
+        self,
+        tool_call_id: str,
+        arguments: Mapping[str, Any],
+        context: ToolContext | None = None,
+    ) -> ApprovalRequest:
+        """What the user is asked before this call runs. Offers "allow for this session" as well."""
         args = dict(arguments)
-        title = self.approval_title(**args) if self.approval_title else f"Run {self.name}({args})"
-        preview = self.preview(**args) if self.preview else None
+        title = _run_hook(self.approval_title, args, context) if self.approval_title else f"Run {self.name}({args})"
+        preview = _run_hook(self.preview, args, context) if self.preview else None
         return ApprovalRequest(
             tool_call_id=tool_call_id,
             tool_name=self.name,
@@ -200,6 +248,7 @@ class Tool:
             title=title,
             arguments=args,
             preview=preview,
+            options=TOOL_APPROVAL_OPTIONS if self.session_allowed_for(args, context) else ONE_TIME_OPTIONS,
         )
 
 
@@ -213,15 +262,20 @@ def tool(
     denied_message: str | None = None,
     approval_title: Callable[..., str] | None = None,
     preview: Callable[..., Preview | None] | None = None,
+    precheck: Callable[..., str | None] | None = None,
+    allow_always: Callable[..., bool] | bool = True,
     paths: tuple[str, ...] = (),
     registry: dict[str, Tool] | None = None,
 ) -> Callable[[Callable[..., str]], Callable[..., str]]:
     """Register a function as a tool. The function is returned unchanged.
 
-    `approval_title` and `preview` receive the same keyword arguments as the tool.
+    `approval_title`, `preview` and `precheck` receive the same keyword arguments as the tool
+    (and `context` when they declare it). `precheck` returns an error text, or None to go on.
     `denied_message` is what the model receives when the user says no.
-    `paths` names the parameters that are file paths (each must be `str`, or `str | None` for an
-    optional path; an absent or null optional path is not resolved, so the tool sees None).
+    `allow_always` decides whether "allow for this session" is offered and kept for a call: True (the
+    default), False, or a hook (like precheck) that returns a bool for each call, for example per path.
+    `paths` names the parameters that are file paths (each must be `str` or `list[str]`, optionally
+    `| None`; an absent or null optional path is not resolved, so the tool sees None).
     `registry` defaults to REGISTRY; tests pass their own dict.
     """
     risk = Risk(risk)
@@ -239,7 +293,7 @@ def tool(
             if arg not in hints:
                 raise TypeError(f"tool {name!r}: paths names {arg!r}, which is not a parameter")
             if not _is_path_type(hints[arg]):
-                raise TypeError(f"tool {name!r}: path parameter {arg!r} must be str or str | None")
+                raise TypeError(f"tool {name!r}: path parameter {arg!r} must be str, list[str], or either with | None")
         table[name] = Tool(
             name=name,
             description=description,
@@ -250,6 +304,8 @@ def tool(
             denied_message=denied_message or f"User denied {name}.",
             approval_title=approval_title,
             preview=preview,
+            precheck_hook=precheck,
+            allow_always=allow_always,
             takes_context=_takes_context(fn),
             path_args=tuple(paths),
         )

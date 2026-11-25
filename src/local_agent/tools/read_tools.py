@@ -187,6 +187,49 @@ def grep(
 FILTER_KEY_PATTERN = r"^filter\..*\.(clean|smudge|process)$"
 
 
+def _filter_name(key: str) -> str:
+    """The filter name in a `filter.<name>.<clean|smudge|process>` key. A name may contain dots."""
+    return key[len("filter."):].rsplit(".", 1)[0]
+
+
+def _repo_filter_keys(workspace: Path, env: dict, safe: list[str]) -> tuple[list[str], str | None]:
+    """The repo-scope `filter.<name>.clean|smudge|process` keys (local or worktree scope, including include.path),
+    sorted, without duplicates. Returns (keys, error). If the listing fails (timeout, OSError, or an exit code
+    other than 0 or 1) the error text is returned and the keys are empty. Not being a repository is not an
+    error here (no keys). Reading config runs nothing."""
+    try:
+        res = subprocess.run(
+            ["git", *safe, "config", "-z", "--show-scope", "--name-only", "--get-regexp", FILTER_KEY_PATTERN],
+            cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT_S, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return [], "Error: could not read the git config, so git was not run (timed out)."
+    except OSError as e:
+        return [], f"Error: could not read the git config, so git was not run: {e}"
+    err = res.stderr.strip()
+    if res.returncode == 1:  # no matching keys
+        return [], None
+    if res.returncode == 128 and "not a git repository" in err.lower():
+        return [], None
+    if res.returncode != 0:
+        return [], (f"Error: could not read the git config, so git was not run "
+                    f"(exit {res.returncode}): {err[:200]}")
+    # Output with -z is "scope\0key\0" pairs. A key may contain dots, and a filter name may contain
+    # any character except a newline, so split on NUL only.
+    fields = res.stdout.split("\0")
+    pairs = [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
+    return sorted({key for scope, key in pairs if scope in ("local", "worktree")}), None
+
+
+def repo_filter_names(workspace: Path) -> tuple[list[str], str | None]:
+    """The names of the repo-defined filters (see _repo_filter_keys), sorted, or (no names, error)."""
+    keys, error = _repo_filter_keys(workspace, git_env(workspace), _git_options())
+    if error is not None:
+        return [], error
+    return sorted({_filter_name(key) for key in keys}), None
+
+
 def _repo_filter_overrides(workspace: Path, env: dict, safe: list[str]) -> tuple[dict[str, str], str | None]:
     """Environment entries that blank every clean/smudge/process filter defined in the repo's own config
     (local or worktree scope, including include.path) and set each such filter's `required` to false,
@@ -195,38 +238,15 @@ def _repo_filter_overrides(workspace: Path, env: dict, safe: list[str]) -> tuple
     GIT_CONFIG_VALUE_n, not `-c`, because `-c` splits at the first '=' and a filter name may contain one.
     Any entries already in `env` are kept and the new ones are appended after them.
 
-    Returns (entries, error). If the listing fails (timeout, OSError, or an exit code other than 0 or 1)
-    the error text is returned and git must not run. Not being a repository is not an error here: the
-    real command then gives the usual message. Reading config runs nothing."""
-    try:
-        res = subprocess.run(
-            ["git", *safe, "config", "-z", "--show-scope", "--name-only", "--get-regexp", FILTER_KEY_PATTERN],
-            cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT_S, env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, "Error: could not read the git config, so git was not run (timed out)."
-    except OSError as e:
-        return {}, f"Error: could not read the git config, so git was not run: {e}"
-    err = res.stderr.strip()
-    if res.returncode == 1:  # no matching keys
-        return {}, None
-    if res.returncode == 128 and "not a git repository" in err.lower():
-        return {}, None
-    if res.returncode != 0:
-        return {}, (f"Error: could not read the git config, so git was not run "
-                    f"(exit {res.returncode}): {err[:200]}")
-    # Output with -z is "scope\0key\0" pairs. A key may contain dots, and a filter name may contain
-    # any character except a newline, so split on NUL only.
-    fields = res.stdout.split("\0")
-    pairs = [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
-    overrides: dict[str, str] = {}  # key -> value, de-duplicated
-    for scope, key in pairs:
-        if scope not in ("local", "worktree"):
-            continue
+    Returns (entries, error). If the listing fails the error text is returned and git must not run
+    (see _repo_filter_keys)."""
+    keys, error = _repo_filter_keys(workspace, env, safe)
+    if error is not None:
+        return {}, error
+    overrides: dict[str, str] = {}  # key -> value
+    for key in keys:
         overrides[key] = ""
-        name = key[len("filter."):].rsplit(".", 1)[0]
-        overrides[f"filter.{name}.required"] = "false"
+        overrides[f"filter.{_filter_name(key)}.required"] = "false"
     if not overrides:
         return {}, None
     try:
@@ -240,33 +260,55 @@ def _repo_filter_overrides(workspace: Path, env: dict, safe: list[str]) -> tuple
     return entries, None
 
 
-def _run_git(args: list[str], context: ToolContext, empty: str) -> str:
-    """Run git in the workspace. Returns its output, `empty` when there is none, or a message on failure. Never raises."""
-    workspace = _workspace(context)
-    if shutil.which("git") is None:
-        return "Error: git is not installed or not on PATH."
-    # The repo's own config must not run anything: fsmonitor, textconv, hooks and filter
-    # drivers are commands that a cloned or untrusted .git/config or .gitattributes could set.
+def git_env(workspace: Path) -> dict[str, str]:
+    """The environment for every git call here: no prompts, no optional index locks, and no search above the workspace."""
     # GIT_CEILING_DIRECTORIES stops git from finding a repository above the workspace.
     # GIT_CONFIG_NOSYSTEM is not set: Git for Windows sets core.autocrlf=true in the system
     # config, and ignoring it makes every CRLF checkout look modified.
-    env = {
+    return {
         **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_OPTIONAL_LOCKS": "0",
         "GIT_CEILING_DIRECTORIES": str(workspace.parent),
     }
-    safe = [
+
+
+def _git_options() -> list[str]:
+    """The leading git options every hardened call gets (see hardened_git)."""
+    return [
         "--no-pager",
         "-c", "color.ui=never",
         "-c", "core.fsmonitor=false",
         "-c", "core.untrackedCache=false",
         "-c", f"core.hooksPath={os.devnull}",
     ]
-    overrides, error = _repo_filter_overrides(workspace, env, safe)
+
+
+def hardened_git(workspace: Path) -> tuple[list[str], dict[str, str], str | None]:
+    """The leading git options and the environment for a git call that must not run anything the repository configures.
+
+    Returns (options, env, error). A non-None error means git must not run (see _repo_filter_overrides).
+    Used by the read tools and by git_commit (tools/git_write.py), so both harden git the same way.
+    """
+    # The repo's own config must not run anything: fsmonitor, textconv, hooks and filter
+    # drivers are commands that a cloned or untrusted .git/config or .gitattributes could set.
+    env = git_env(workspace)
+    options = _git_options()
+    overrides, error = _repo_filter_overrides(workspace, env, options)
+    if error is not None:
+        return options, env, error
+    env.update(overrides)
+    return options, env, None
+
+
+def _run_git(args: list[str], context: ToolContext, empty: str) -> str:
+    """Run git in the workspace. Returns its output, `empty` when there is none, or a message on failure. Never raises."""
+    workspace = _workspace(context)
+    if shutil.which("git") is None:
+        return "Error: git is not installed or not on PATH."
+    safe, env, error = hardened_git(workspace)
     if error is not None:
         return error
-    env.update(overrides)
     try:
         res = subprocess.run(
             ["git", *safe, *args],

@@ -1,6 +1,7 @@
 """Tool registry: schema generation from type hints, risk, kind and approval requests."""
 
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Literal
 
 import pytest
 
@@ -8,7 +9,8 @@ from local_agent import tools
 from local_agent.core.events import Preview
 from local_agent.permissions import Risk, needs_approval
 from local_agent.tools import Location, tool
-from local_agent.tools.builtin import MAX_PREVIEW_CHARS
+from local_agent.tools.edit_tools import MAX_PREVIEW_CHARS
+from local_agent.tools.registry import ToolContext
 
 
 def registry_with(fn, **kwargs) -> dict:
@@ -45,13 +47,22 @@ def test_builtin_schemas_match_what_ollama_received_before_t02():
             },
         },
     }
+    # T07 added the shell choice to run_command; the schema is now an enum, so a model cannot ask for another shell.
     assert tools.TOOLS["run_command"].schema()["function"] == {
         "name": "run_command",
-        "description": "Run a shell command (asks for approval first).",
+        "description": ('Run a command in the workspace folder and return its exit code and output '
+                        '(asks for approval first). shell is "cmd" (the default) or "powershell".'),
         "parameters": {
             "type": "object",
             "required": ["command"],
-            "properties": {"command": {"type": "string", "description": ""}},
+            "properties": {
+                "command": {"type": "string", "description": ""},
+                "shell": {
+                    "type": "string",
+                    "enum": ["powershell", "cmd"],
+                    "description": "cmd (the default) runs the Windows command prompt; powershell runs PowerShell.",
+                },
+            },
         },
     }
 
@@ -192,8 +203,8 @@ def test_write_preview_under_limit_is_full_content():
 def test_exec_approval_request_carries_the_command():
     request = tools.TOOLS["run_command"].approval_request("1.1", {"command": "dir /b"})
 
-    assert request.title == "Run command `dir /b`"
-    assert request.preview == Preview(text="dir /b", kind="command")
+    assert request.title == "Run cmd command `dir /b`"
+    assert request.preview == Preview(text="dir /b", kind="command", shell="cmd")
     assert request.arguments == {"command": "dir /b"}
 
 
@@ -229,3 +240,60 @@ def test_optional_plain_type_has_no_description():
 
     schema = registry_with(plain, risk=Risk.READ)["plain"].parameters
     assert schema["properties"]["x"] == {"type": "string", "description": ""}
+
+def test_literal_parameters_are_enums_and_a_value_outside_them_is_refused_before_the_call():
+    def pick(mode: Literal["a", "b"] = "a") -> str:
+        """Pick one."""
+        return mode
+
+    picked = registry_with(pick, risk=Risk.READ)["pick"]
+
+    assert picked.parameters["properties"]["mode"]["enum"] == ["a", "b"]
+    picked.bind({"mode": "b"})
+    picked.bind({"mode": None})
+    with pytest.raises(TypeError, match=r"pick\(\) argument 'mode' must be one of \['a', 'b'\], got 'c'"):
+        picked.bind({"mode": "c"})
+
+
+def test_a_list_of_paths_is_a_valid_path_parameter():
+    def take(paths: list[str] | None = None) -> str:
+        """Take paths."""
+        return ""
+
+    table = registry_with(take, risk=Risk.READ, paths=("paths",))
+
+    assert table["take"].path_args == ("paths",)
+
+
+def test_a_list_of_non_strings_is_not_a_path_parameter():
+    def take(paths: list[int]) -> str:
+        """Take numbers."""
+        return ""
+
+    with pytest.raises(TypeError, match="must be str, list"):
+        registry_with(take, risk=Risk.READ, paths=("paths",))
+
+
+def test_hooks_get_the_context_when_they_declare_it_and_precheck_runs_on_the_arguments():
+    seen: dict = {}
+
+    def title(text: str, *, context: ToolContext) -> str:
+        seen["title"] = context.workspace
+        return "a title"
+
+    def check(text: str) -> str | None:
+        return "empty text" if not text else None
+
+    def run(text: str, *, context: ToolContext) -> str:
+        """Run."""
+        return text
+
+    table = registry_with(run, risk=Risk.WRITE, approval_title=title, precheck=check)
+    run_tool = table["run"]
+
+    assert run_tool.precheck({"text": ""}) == "empty text"
+    assert run_tool.precheck({"text": "x"}) is None
+    request = run_tool.approval_request("1.1", {"text": "x"}, ToolContext(workspace=Path("here")))
+    assert request.title == "a title"
+    assert seen["title"] == Path("here")
+    assert request.options == ("allow_once", "allow_always", "reject_once")

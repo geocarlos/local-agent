@@ -6,7 +6,7 @@ from fakes import text_reply, tool_reply
 
 from local_agent.core import loop
 from local_agent.core.events import ApprovalRequest, Decision, ToolCall, ToolResult
-from local_agent.tools import builtin
+from local_agent.tools import process
 
 
 class RecordingApprover:
@@ -79,9 +79,9 @@ def test_write_denied_leaves_the_file_alone(fake_ollama, workspace):
 
 
 def test_exec_granted_runs_the_command(fake_ollama):
-    command = f'"{sys.executable}" -c "print(\'pong\')"'
+    command = f'& "{sys.executable}" -c "print(\'pong\')"'  # PowerShell, the default shell, needs &
     client = fake_ollama([
-        tool_reply(("run_command", {"command": command})),
+        tool_reply(("run_command", {"command": command, "shell": "powershell"})),
         text_reply("it printed pong"),
     ])
     approver = RecordingApprover(Decision.ALLOW_ONCE)
@@ -89,8 +89,9 @@ def test_exec_granted_runs_the_command(fake_ollama):
     _, events = run(client, approver)
 
     assert len(approver.requests) == 1
-    assert approver.requests[0].title == f"Run command `{command}`"
+    assert approver.requests[0].title == f"Run PowerShell command `{command}`"
     assert approver.requests[0].preview.text == command
+    assert approver.requests[0].preview.shell == "PowerShell"
     content = result_of(events).content
     assert content.startswith("EXIT CODE: 0")
     assert "pong" in content
@@ -99,9 +100,9 @@ def test_exec_granted_runs_the_command(fake_ollama):
 
 def test_exec_denied_never_runs(fake_ollama, monkeypatch):
     def fail_if_run(*args, **kwargs):
-        raise AssertionError("subprocess.run must not be called when the command is denied")
+        raise AssertionError("subprocess.Popen must not be called when the command is denied")
 
-    monkeypatch.setattr(builtin.subprocess, "run", fail_if_run)
+    monkeypatch.setattr(process.subprocess, "Popen", fail_if_run)
     client = fake_ollama([
         tool_reply(("run_command", {"command": "echo should-not-run"})),
         text_reply("understood"),
@@ -235,9 +236,9 @@ class RaisingApprover:
 
 def test_approver_that_raises_refuses_and_does_not_run(fake_ollama, workspace, monkeypatch):
     def fail_if_run(*args, **kwargs):
-        raise AssertionError("subprocess.run must not be called when the approver fails")
+        raise AssertionError("subprocess.Popen must not be called when the approver fails")
 
-    monkeypatch.setattr(builtin.subprocess, "run", fail_if_run)
+    monkeypatch.setattr(process.subprocess, "Popen", fail_if_run)
     target = workspace / "out.txt"
     client = fake_ollama([
         tool_reply(("write_file", {"path": str(target), "content": "x"})),

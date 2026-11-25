@@ -571,8 +571,9 @@ def test_tools_without_path_arguments_are_not_checked(fake_ollama, ws, monkeypat
 
 
 def test_run_command_starts_in_the_workspace_not_the_cwd(fake_ollama, ws):
-    command = f'"{sys.executable}" -c "import os; print(os.getcwd())"'
-    client = fake_ollama([tool_reply(("run_command", {"command": command})), text_reply("ok")])
+    command = f'& "{sys.executable}" -c "import os; print(os.getcwd())"'  # PowerShell (the default) needs &
+    client = fake_ollama([tool_reply(("run_command", {"command": command, "shell": "powershell"})),
+                          text_reply("ok")])
     approver = Scripted(ALLOW)
 
     _, events = run(client, ws, approver)
@@ -604,3 +605,20 @@ def test_paths_must_name_a_str_parameter():
         tool(risk=Risk.READ, paths=("nope",), registry={})(no_such)
     with pytest.raises(TypeError, match="must be str"):
         tool(risk=Risk.READ, paths=("count",), registry={})(not_text)
+
+def test_check_arguments_checks_every_path_in_a_list(ws, outside):
+    args, outside_items = sandbox.check_arguments(
+        ("paths",), {"paths": ["a.txt", str(outside / "secret.txt")]}, ws)
+
+    assert [Path(p) for p in args["paths"]] == [Path(real(ws / "a.txt")), Path(real(outside / "secret.txt"))]
+    assert [item.requested for item in outside_items] == [str(outside / "secret.txt")]
+
+
+def test_a_refused_name_in_a_list_refuses_the_whole_call(ws):
+    with pytest.raises(sandbox.PathRefused):
+        sandbox.check_arguments(("paths",), {"paths": ["a.txt", "CON"]}, ws)
+
+
+def test_a_list_argument_that_is_not_text_is_refused(ws):
+    with pytest.raises(sandbox.PathRefused):
+        sandbox.check_arguments(("paths",), {"paths": [5]}, ws)
