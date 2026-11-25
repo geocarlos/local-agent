@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>local-agent</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>local-agent</h1>
+    <span id="status" class="status" role="status">Connecting...</span>
+    <span id="workspace" class="workspace" title="The folder the agent works in"></span>
+  </header>
+
+  <main class="layout">
+    <section id="chat" class="chat" aria-label="Conversation"></section>
+    <p id="notice" class="notice" hidden></p>
+
+    <form id="composer" class="composer" autocomplete="off">
+      <label for="prompt" class="visually-hidden">Message</label>
+      <textarea id="prompt" rows="3" placeholder="Ask local-agent. Enter sends, Shift+Enter adds a line." disabled></textarea>
+      <div class="actions">
+        <span id="usage" class="usage" aria-live="polite"></span>
+        <button id="cancel" type="button" disabled>Cancel</button>
+        <button id="send" type="submit" disabled>Send</button>
+      </div>
+    </form>
+  </main>
+
+  <dialog id="approval" class="approval" aria-labelledby="approval-title">
+    <h2 id="approval-title"></h2>
+    <div id="approval-preview" class="preview"></div>
+    <div id="approval-options" class="options"></div>
+  </dialog>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

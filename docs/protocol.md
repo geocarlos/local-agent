@@ -26,12 +26,26 @@ Shutdown: when stdin reaches EOF, the server cancels every running turn and wait
 local-agent serve --web [--port N] [the same settings flags as --stdio]
 ```
 
-The server listens on `127.0.0.1` only, on port `N` (default `0`: a free port the system picks). It prints two lines to stderr at start-up:
+The server listens on `127.0.0.1` only, on port `N` (default `0`: a free port the system picks). It prints these lines to stderr at start-up:
 
 ```
 local-agent web server: http://127.0.0.1:52811/
+Open this link in a browser: http://127.0.0.1:52811/#token=<token>
 WebSocket: ws://127.0.0.1:52811/ws?token=<token>
 ```
+
+**Routes (HTTP).** The token is never needed for the page itself:
+
+| Route | Answer |
+| --- | --- |
+| `GET /` | the web UI (`index.html`) |
+| `GET /<file>` | a file of the web folder (`src/local_agent/web/`): `.html`, `.css`, `.js`, `.svg`, `.png`, `.ico`, with its content type. Any other path, a folder, a `..` or backslash path, a symbolic link out of the folder: `404` |
+| `GET /info` | `{"cwd": <workspace>, "protocolVersion": 1}`, `Cache-Control: no-store`. Needs the token in an `Authorization: Bearer` header (not in the query, so it stays out of logs and history); without it, `403` |
+| `GET /ws` | the WebSocket (below) |
+
+Every HTTP response carries `Content-Security-Policy` (`default-src 'none'`; `script-src 'self'`; `style-src 'self'`; `img-src 'self'`; `connect-src 'self' ws://127.0.0.1:PORT ws://localhost:PORT`; no inline scripts or styles), `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. The OpenAPI and docs routes are not served.
+
+**The web UI and the token.** The page reads the token from the URL fragment (`#token=...`). A browser does not send a fragment to the server, so the token is not in any request line or log. The page removes the fragment from the address bar and keeps the token in memory only. It then calls `/info` and opens `/ws?token=...`.
 
 **Token.** Each process makes a new random token (32 bytes, URL-safe, `secrets.token_urlsafe`) when it starts; it is not saved and not reused. Every WebSocket must present it, in one of two ways:
 
@@ -50,7 +64,7 @@ The comparison is constant-time (`hmac.compare_digest`). A missing or wrong toke
 
 **Logs.** uvicorn's access log is off, so the token is not written in the log. Nothing else is printed to stdout by the server.
 
-**Not yet:** the web UI is not built (T16). `GET /` returns a one-line text page and nothing else. There are no HTTP routes for the protocol; only `/ws`. The OpenAPI and docs routes are off.
+**No HTTP protocol routes.** The protocol is only on `/ws`. The routes above are for the web UI.
 
 ## Framing
 
@@ -170,6 +184,7 @@ The client answers with the same `id`:
 {"jsonrpc":"2.0","id":"srv-1","result":{"outcome":{"outcome":"selected","optionId":"allow_once"}}}
 ```
 
+- `toolCall._meta.preview` is an extension (ACP's `_meta` is the place for them, as `_meta.usage` is in the prompt result): what the user approves, when the tool has one. `{"kind": "diff" | "text" | "command", "text": ..., "path": ... or null, "shell": ... or null}`. A `diff` is a unified diff (`---`, `+++`, `@@`, then lines starting with `+`, `-` or a space). A `text` is proposed file content (with a `path`) or a preview of a call's arguments or a fetch (no path). A `command` is a command line with the shell that runs it. The text is capped at 1500 characters for display; a capped text ends with `\n...[N more chars]`, and the UI says the preview is truncated. A tool without a preview has no `_meta.preview` key.
 - The options offered are these, by `optionId` (the ACP kind):
   - `allow_once`: run this call only.
   - `allow_always`: run it and allow the same tool in the same workspace for the rest of the session. Offered only where the agent allows it: not for a path outside the workspace, a write under a `.git` folder, a write into the plugin folder, `git_commit`, or `web_fetch`.
@@ -232,4 +247,5 @@ A notification with an unknown method, or a `session/cancel` for an unknown sess
 - **Token counts:** ACP has no place for them in the prompt result, so `promptTokens` and `completionTokens` are under `_meta.usage`. The `usage_update` `used` value is the prompt size of the last request, and `size` is `num_ctx`.
 - **Permission options:** `reject_always` is never offered. The `allow_always` option is offered only in the cases listed above.
 - **Error codes:** a failed turn is `-32603`, a busy session is `-32600`. ACP does not name codes for these cases.
+- **Permission preview:** `toolCall._meta.preview` of a permission request is an extension (the diff or proposed content the user approves). ACP's own `diff` content type needs the old and new text; the agent has a unified diff, so it is sent as text.
 - **Thinking:** sent as `agent_thought_chunk`, which the schema allows. Its text stays in the agent's history, so it counts towards the context window.

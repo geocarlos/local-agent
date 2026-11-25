@@ -82,7 +82,8 @@ def test_the_web_server_refuses_bad_clients_and_serves_a_real_client(tmp_path):
         proc.stdout.close()
         proc.stderr.close()
 
-    assert not any(token in line for line in lines if "WebSocket:" not in line), "the token is printed only in the URL"
+    # The token is printed only in the two URLs: the page link (its fragment) and the WebSocket URL.
+    assert not any(token in line for line in lines if "WebSocket:" not in line and "#token=" not in line)
 
 
 def test_a_line_over_the_character_limit_gets_32600_and_the_socket_stays_open(tmp_path):

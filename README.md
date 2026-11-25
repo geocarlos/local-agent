@@ -129,10 +129,12 @@ uv run local-agent serve --web                 # a free port, chosen by the syst
 uv run local-agent serve --web --port 8765     # a fixed port
 ```
 
+**Open the web UI.** Start the server and open the line it prints, `Open this link in a browser: http://127.0.0.1:PORT/#token=...`. The page is a chat with streamed replies, tool-call cards, and an approval dialog for each write or command, with the diff (added lines green, removed lines red) and the buttons the agent offers (allow once, allow always for this session, reject). The workspace is the `--cwd` folder. The token is in the link's fragment (after `#`), so the browser never sends it to the server; the page removes it from the address bar and keeps it in memory. Reloading the page needs the printed link again, because the token is new on every start. It was tested in Microsoft Edge; `tests/test_web_browser.py` drives it with Playwright and is skipped where Edge is not installed.
+
 - **Address.** The server binds `127.0.0.1` only. There is no option for another address.
 - **Token.** Each start prints a new random token, on stderr, in the line `WebSocket: ws://127.0.0.1:PORT/ws?token=...`. Pass it as the `token` query parameter, or as `Authorization: Bearer <token>`. A missing or wrong token is refused before the connection is accepted. Anyone who has the token can make the agent act as you, so keep it private; it changes on every start.
 - **Origin.** A connection that sends an `Origin` header is accepted only from `http://127.0.0.1:PORT` or `http://localhost:PORT`. A connection with no `Origin` (a script or an editor extension) is accepted if the token is right.
-- **Not yet.** The web UI is a later task (T16); `GET /` returns a one-line page that says where the WebSocket is.
+- **Web UI.** `GET /` serves the page from `src/local_agent/web/` (plain HTML, CSS and JavaScript, no build step). Only files of that folder are served; anything else, and any path with `..`, is a 404. The page has a Content-Security-Policy that allows scripts and styles from this server only. `GET /info` needs the token and returns the workspace folder.
 - **Shutdown.** Ctrl+C stops the server. Running turns are cancelled with the same 10 s shared deadline as stdio, then the MCP servers and plugins are closed.
 - **Port.** On Windows the port is opened for this process alone, so another program cannot take a fixed `--port` (it gets an error instead).
 - **Extensions and webviews.** Their origins (`vscode-webview://`, `chrome-extension://`) are refused. Such a client sends the token as `Authorization: Bearer` and no `Origin`.
@@ -338,6 +340,8 @@ src/local_agent/
   __main__.py          # python -m local_agent
   frontends/server.py  # ACP over JSON-RPC lines (StdioServer: sessions, prompt turns on a worker thread, permission requests); serve --stdio; the start-up shared with --web
   frontends/web.py     # serve --web: FastAPI and uvicorn on 127.0.0.1; a WebSocket per connection running a StdioServer; token and Origin checks
+  frontends/webassets.py # the web UI's static files: the folder, the path rules, the Content-Security-Policy
+  web/                 # the web UI: index.html, style.css and js/ (transport.js, acp.js, chat.js, main.js); no build step
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage

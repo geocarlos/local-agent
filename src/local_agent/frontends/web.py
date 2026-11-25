@@ -33,11 +33,12 @@ from typing import Any, TextIO
 
 import ollama
 import uvicorn
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 from local_agent.config import Settings
 from local_agent.frontends import server as acp
+from local_agent.frontends import webassets
 
 WS_PATH = "/ws"
 TOKEN_PARAM = "token"
@@ -72,13 +73,22 @@ def token_ok(presented: str | None, expected: str) -> bool:
     return hmac.compare_digest(presented.encode("utf-8", "replace"), expected.encode("utf-8"))
 
 
-def presented_token(websocket: WebSocket) -> str | None:
+def bearer_token(request: Request) -> str | None:
+    """The token of an `Authorization: Bearer` header, or None. The query parameter is not read (the /info route)."""
+    auth = request.headers.get("authorization")
+    if auth is None:
+        return None
+    scheme, _, value = auth.partition(" ")
+    return value.strip() if scheme.lower() == "bearer" else None
+
+
+def presented_token(request: Request | WebSocket) -> str | None:
     """The token a client sent: the Bearer header if there is an Authorization header, else the query parameter."""
-    auth = websocket.headers.get("authorization")
+    auth = request.headers.get("authorization")
     if auth is not None:
         scheme, _, value = auth.partition(" ")
         return value.strip() if scheme.lower() == "bearer" else None
-    return websocket.query_params.get(TOKEN_PARAM)
+    return request.query_params.get(TOKEN_PARAM)
 
 
 class _FrameWriter:
@@ -168,18 +178,32 @@ async def _serve_connection(websocket: WebSocket, *, settings: Settings, client:
 def create_app(settings: Settings, *, token: str, port: int, client: Any,
                log: Callable[[str], None] = lambda line: print(line, file=sys.stderr, flush=True),
                threads: list[threading.Thread] | None = None) -> FastAPI:
-    """The FastAPI app: a placeholder page at `/` and the ACP WebSocket at `/ws`.
+    """The FastAPI app: the web UI at `/` (static files from the web folder), `/info` (needs the token; gives
+    the workspace folder the UI starts sessions in) and the ACP WebSocket at `/ws`.
 
-    `port` is the port the server is bound to (the Origin check needs it). `threads` collects the
+    `port` is the port the server is bound to (the Origin check and the CSP need it). `threads` collects the
     connection threads, so the caller can wait for them at shutdown. The OpenAPI and docs routes are off.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     connection_threads: list[threading.Thread] = [] if threads is None else threads
+    headers = webassets.page_headers(port)
 
-    @app.get("/")
-    async def index() -> PlainTextResponse:
-        # The web UI is a later task (T16); until then this page only says where the WebSocket is.
-        return PlainTextResponse("local-agent web server. The agent WebSocket is at /ws and needs the token.\n")
+    @app.get("/info")
+    async def info(request: Request) -> Response:
+        no_store = {**headers, "Cache-Control": "no-store"}
+        if not token_ok(bearer_token(request), token):  # the header only: a query token would reach logs and history
+            return JSONResponse({"error": "A valid token is needed."}, status_code=403, headers=no_store)
+        return JSONResponse({"cwd": str(settings.workspace), "protocolVersion": acp.PROTOCOL_VERSION},
+                            headers=no_store)
+
+    @app.get("/{name:path}")
+    async def static_file(name: str) -> Response:
+        # Only files of the web folder are served (webassets.find_asset). Anything else is a 404, including
+        # paths with "..", and the docs and OpenAPI paths, which are not routed.
+        path = webassets.find_asset(name)
+        if path is None:
+            return PlainTextResponse("Not found.\n", status_code=404, headers=headers)
+        return FileResponse(path, media_type=webassets.content_type(path), headers=headers)
 
     @app.websocket(WS_PATH)
     async def agent_socket(websocket: WebSocket) -> None:
@@ -243,6 +267,8 @@ def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: 
         with contextlib.redirect_stdout(errors), acp.running_agent(settings, client=client, log=log):
             try:
                 log(f"local-agent web server: http://127.0.0.1:{bound_port}/")
+                # The token is in the fragment: a browser never sends it to the server, and the page removes it from the address bar.
+                log(f"Open this link in a browser: http://127.0.0.1:{bound_port}/#{TOKEN_PARAM}={token}")
                 log(f"WebSocket: ws://127.0.0.1:{bound_port}{WS_PATH}?{TOKEN_PARAM}={token}")
                 log("The token is new on every start. Anyone who has it can make the agent act as you: keep it private.")
                 uv_server.run(sockets=[sock])
