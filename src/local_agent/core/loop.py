@@ -1,7 +1,8 @@
 """The agent loop: one user turn of model <-> tool rounds.
 
 The loop reports what happens as events (core/events.py) through an EventSink,
-and asks an Approver before any write, exec or network tool runs. It never
+and asks an Approver before any write, exec or network tool runs, and before a
+path argument that resolves outside the workspace is used (see sandbox.py). It never
 prints or reads input; the frontend decides how to show events and answer.
 
 Settings (config.Settings) are passed in: model, host, num_ctx (sent with every
@@ -25,13 +26,15 @@ never reaches history.
 
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import ollama
 
-from local_agent import tools
+from local_agent import sandbox, tools
 from local_agent.config import Settings
 from local_agent.core.events import (
+    ApprovalRequest,
     Error,
     EventSink,
     TextDelta,
@@ -134,7 +137,8 @@ def _run_rounds(
     usage: _Usage,
 ) -> str | None:
     tool_context = ToolContext(command_timeout_s=settings.command_timeout_s,
-                               max_output_chars=settings.max_output_chars)
+                               max_output_chars=settings.max_output_chars,
+                               workspace=settings.workspace)
     for round_no in range(1, settings.max_tool_rounds + 1):
         if cancel.is_set():
             emit(TurnDone(stop_reason="cancelled", text=None, rounds=round_no - 1, usage=usage.value()))
@@ -161,7 +165,7 @@ def _run_rounds(
             return text
 
         # Execute each requested tool and feed results back to the model.
-        if _run_calls(calls, round_no, messages, emit, approver, cancel, tool_context):
+        if _run_calls(calls, round_no, messages, emit, approver, cancel, tool_context, settings.workspace):
             emit(TurnDone(stop_reason="cancelled", text=None, rounds=round_no, usage=usage.value()))
             return None
 
@@ -235,6 +239,7 @@ def _run_calls(
     approver: Approver,
     cancel: threading.Event,
     tool_context: ToolContext,
+    workspace: Path,
 ) -> bool:
     """Run the tool calls of one reply. Returns True if the turn was cancelled.
 
@@ -252,7 +257,8 @@ def _run_calls(
             content, status = CANCELLED_MESSAGE, "failed"
         else:
             try:
-                content, status = _run_tool(tool, name, call_id, args, emit, approver, tool_context)
+                content, status = _run_tool(tool, name, call_id, args, emit, approver, tool_context,
+                                            workspace)
             except KeyboardInterrupt:  # Ctrl+C at an approval prompt or while a tool runs
                 cancel.set()
                 content, status = CANCELLED_MESSAGE, "failed"
@@ -290,8 +296,14 @@ def _run_tool(
     emit: EventSink,
     approver: Approver,
     tool_context: ToolContext,
+    workspace: Path,
 ) -> tuple[str, ToolStatus]:
-    """Run one tool call after the approval policy. Failures come back as text for the model."""
+    """Run one tool call after the sandbox and approval policy. Failures come back as text for the model.
+
+    Order: bind the arguments; resolve the path arguments (refused paths stop here, unasked);
+    ask for each path outside the workspace; ask for the tool's own risk; then run with the
+    resolved paths.
+    """
     if tool is None:
         return f"Unknown tool: {name}", "failed"
     if tool.location is not Location.CORE:
@@ -299,16 +311,28 @@ def _run_tool(
     try:
         # Bind first: bad arguments are reported before the user is asked, and with the real tool's name.
         tool.bind(args, tool_context)
+        try:
+            args, outside = sandbox.check_arguments(tool.path_args, args, workspace)
+        except sandbox.PathRefused as e:
+            return f"Refused: {e}.", "failed"
+        for item in outside:
+            request = sandbox.outside_request(call_id, tool.name, tool.risk.value, item, workspace)
+            if not _approved(request, emit, approver):
+                return sandbox.outside_denied_message(item, workspace), "failed"
         if needs_approval(tool.risk):
             request = tool.approval_request(call_id, args)
-            emit(request)
-            try:
-                decision = approver.decide(request)
-            except Exception:
-                # An approver that fails has not approved anything: refuse, and do not run the tool.
-                return tool.denied_message, "failed"
-            if not decision.allowed:
+            if not _approved(request, emit, approver):
                 return tool.denied_message, "failed"
         return tool.call(args, tool_context), "completed"
     except Exception as e:
         return f"Error calling {name} with arguments {args}: {type(e).__name__}: {e}", "failed"
+
+
+def _approved(request: ApprovalRequest, emit: EventSink, approver: Approver) -> bool:
+    """Show the request to the sink, then ask the approver. An approver that fails has approved nothing."""
+    emit(request)
+    try:
+        decision = approver.decide(request)
+    except Exception:
+        return False
+    return decision.allowed

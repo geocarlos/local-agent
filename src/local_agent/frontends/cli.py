@@ -2,8 +2,9 @@
 
 Renders core events as text and answers approval requests with y/n.
 The text matches the pre-T02 output: "[Tool Call]", "[PROPOSED CONTENT]",
-"[APPROVE]" and "Agent:" lines. Model text is printed as it streams, after one
-"Agent: " prefix per reply. A "[thinking...]" line marks reasoning, and a
+"[APPROVE]" and "Agent:" lines. A path outside the workspace first shows an
+"[OUTSIDE WORKSPACE]" line, then its own [APPROVE] question with the resolved
+path. Model text is printed as it streams, after one "Agent: " prefix per reply. A "[thinking...]" line marks reasoning, and a
 "[tokens: ...]" line follows each turn that Ollama reported counts for.
 
 Ctrl+C during a turn cancels the turn and returns to the "You:" prompt. Ctrl+C
@@ -72,6 +73,9 @@ class Renderer:
         elif isinstance(event, ToolResult):
             self._thinking_shown = False  # the next model request starts a new round of reasoning
         elif isinstance(event, ApprovalRequest):
+            if event.scope == "outside_workspace":
+                print(f"\n[OUTSIDE WORKSPACE] {event.tool_name} reaches past the folder the agent works in. "
+                      "Answer n unless you expect it.")
             preview = event.preview
             if preview is not None and preview.kind == "text" and preview.path is not None:
                 print(f"\n[PROPOSED CONTENT for '{preview.path}']\n{preview.text}\n[END PROPOSED CONTENT]")

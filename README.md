@@ -7,6 +7,7 @@ A small command-line coding assistant that runs entirely on local models through
 - **Local models only**: talks to your Ollama server, so code and prompts stay on your machine.
 - **Tool calling**: the model can use `read_file`, `write_file`, and `run_command`. Models that print a tool call as text instead (for example `qwen2.5-coder:7b`) are handled too.
 - **Approval gates**: every write and command asks `y/n` first. Writes show a preview of the content.
+- **Workspace sandbox**: file paths resolve against the workspace folder. A path outside it, including through `..`, a junction or a symlink, asks `y/n` on its own, even for reads. Without an answer of `y` it is refused.
 - **Guard rails**: shell commands time out after 60 s, tool output is truncated at 8000 characters, and each turn is capped at 10 tool rounds. All three are configurable.
 - **Context window set explicitly**: every request sends `num_ctx` (default 8192), and each turn shows how many tokens the prompt used. A warning appears when the prompt nearly fills the window.
 - **Startup check**: the model is checked once at startup. A warning shows if it does not report tool support.
@@ -81,7 +82,7 @@ workspace = "C:\\src\\my-project"   # or a relative path, taken from the config 
 | `max_tool_rounds` | | `10` | Max model/tool rounds per user message |
 | `max_output_chars` | | `8000` | Max characters of tool output sent to the model |
 | `command_timeout_s` | | `60` | Timeout for shell commands, in seconds |
-| `workspace` | `--cwd` | the current folder | The folder the agent starts in: `--cwd` changes into it, and tools run there. Stored only for now; the sandbox that confines tools to it comes later. |
+| `workspace` | `--cwd` | the current folder | The workspace folder. Relative file paths resolve against it, `run_command` starts in it, and paths outside it need approval (see Safety). `--cwd` also changes into it. |
 
 An unknown key, a wrong type or an out-of-range value stops the program at startup with a message that names the file or flag, and exit code 2. Example: `Error: C:\...\config.toml: num_ctx must be at least 512, got 100`.
 
@@ -100,7 +101,8 @@ src/local_agent/
   core/model.py        # Ollama error messages, startup probe of the model's capabilities
   core/toolcalls.py    # fallback parser: tool calls printed as JSON text become real calls
   permissions.py       # risk tiers, approval policy (read auto-allowed), Approver protocol
-  tools/registry.py    # @tool decorator, JSON schema from type hints, Tool objects, ToolContext
+  sandbox.py           # resolves path arguments against the workspace; inside, outside or refused
+  tools/registry.py    # @tool decorator (risk, paths=), JSON schema from type hints, Tool objects, ToolContext
   tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
   tools/builtin.py     # read_file (read), write_file (write), run_command (exec)
   frontends/cli.py     # terminal REPL and flags: renders events, answers approvals with y/n
@@ -116,6 +118,7 @@ tests/
   test_model.py        # startup capability probe (tools missing or present), Ollama-down and model-missing at startup
   test_toolcalls.py    # fallback parser: valid forms, rejected forms, approvals through the loop
   test_tool_context.py # per-turn limits passed to tools, the context argument kept out of the schema
+  test_sandbox.py      # path resolution (..., prefix tricks, drives, UNC, ADS, 8.3, junctions) and outside-workspace approvals
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
 
@@ -153,6 +156,7 @@ def count_lines(path: Annotated[str, "File to count"]) -> str:
 ```
 
 - `risk`: `Risk.READ` runs without asking. `WRITE`, `EXEC` and `NETWORK` ask the approver first.
+- `paths=("path",)`: names the parameters that are file paths (each must be a `str`). The core resolves them against the workspace before the tool runs, asks separately for a path outside it, and passes the tool the resolved absolute path. Do not check paths inside the tool.
 - For risky tools, add `approval_title=` (a function returning the question, for example `"Write 12 chars to 'a.txt'"`) and `preview=` (a function returning a `Preview` shown before approval). Both receive the tool's arguments by name. `denied_message=` is what the model receives when the user says no.
 - A tool that needs a limit from the settings declares `context: ToolContext` as a parameter (from `local_agent.tools.registry`). The core fills it in; the model never sees it. `ToolContext.command_timeout_s` and `ToolContext.max_output_chars` are the current values.
 - Supported parameter types: `str`, `int`, `float`, `bool`, `list[T]`, `dict`, and `X | None` for optional parameters. Parameters without a default are required. Use `Annotated[str, "description"]` to describe a parameter.
@@ -170,4 +174,13 @@ The loop takes the Ollama client as a parameter (`run_turn(messages, client=...)
 
 ## Safety
 
-The agent can modify files and run arbitrary shell commands in the directory you start it from (or the one `--cwd` / `workspace` names). Read each approval prompt before answering `y`. Sandboxing that confines tools to the workspace is not in place yet.
+The agent works in one folder, the **workspace**: the folder you start it from, or the one `--cwd` / `workspace` names. What it can do there:
+
+- **File tools** (`read_file`, `write_file`) resolve every path against the workspace, not the process folder. A path inside the workspace runs without an extra question. A path outside it (`..\other`, an absolute path, a junction or symlink that leads out, a short 8.3 name of such a folder, a UNC path, another drive) gets its own prompt: `[OUTSIDE WORKSPACE] ... Allow read_file to access 'C:\...', which is outside the workspace ...`. Answer `y` only if you expect it. A write outside the workspace asks twice, once for the location and once for the write. With no answer of `y` (or no terminal to ask at) the tool does not run, and the model is told why.
+- **Refused without asking**: names that Windows would read as something else. These are alternate data streams (`file.txt:stream`), names ending in a dot or space (Windows drops them, so `jn.` can open the junction `jn`), reserved device names (`NUL`, `CON`, `COM1`, `LPT1`, with or without an extension), the device namespace (`\\.\...`), and empty paths or paths with a NUL character. The model is told the path was refused.
+- **`run_command` is not sandboxed by path.** It starts in the workspace (`cwd`), but a shell command can name any file on the machine, and Windows applies its own rules to it. Every command asks first, so read each one before answering `y`.
+- **Not detected**: a hard link inside the workspace that points at a file outside it looks like an inside path. A file swapped for a link after the check is a race that is not closed.
+
+Windows path cases are covered by `tests/test_sandbox.py`: case and drive-letter case, `C:foo`, `\foo`, UNC, `\\?\` and `\\?\UNC\`, 8.3 short names, junctions (created with `mklink /J` in the test; skipped with a reason if that is not allowed), prefix tricks such as `work-evil` next to `work`, and symlinks (skipped here: Windows refused to create one without Developer Mode or admin).
+
+You still need to read each prompt. The sandbox limits where file tools go; it does not judge what a command or a file's content will do.

@@ -12,5 +12,7 @@ def main(argv: list[str] | None = None) -> None:
     except ConfigError as e:
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(2) from None
-    os.chdir(settings.workspace)  # tools use relative paths and run commands here
+    # Tool paths resolve against settings.workspace, not the cwd; the chdir only keeps the REPL's own
+    # relative paths (and the default for run_command) in the same folder.
+    os.chdir(settings.workspace)
     cli.run(settings=settings)

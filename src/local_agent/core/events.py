@@ -92,6 +92,11 @@ class ApprovalRequest:
     `title` is the question without the `(y/n)` suffix, for example
     "Write 12 chars to 'a.txt'". The core emits this event to the sink (so a
     frontend can show the preview) and then passes it to the Approver for a decision.
+
+    `scope` is "tool" for the tool's own risk (write, exec, network) and
+    "outside_workspace" for a path argument that resolves outside the workspace
+    (see local_agent.sandbox). The second request is asked separately, so a
+    write outside the workspace asks twice.
     """
 
     tool_call_id: str
@@ -100,6 +105,7 @@ class ApprovalRequest:
     title: str
     arguments: dict[str, Any] = field(default_factory=dict)
     preview: Preview | None = None
+    scope: Literal["tool", "outside_workspace"] = "tool"
     type: ClassVar[str] = "approval_request"
 
 

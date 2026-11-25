@@ -47,7 +47,7 @@ class Settings:
     max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS
     command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S
-    # Stored only for now: the sandbox that confines tools to it is T05.
+    # Relative tool paths resolve against it, and paths outside it need approval (see sandbox.py).
     workspace: Path = field(default_factory=Path.cwd)
 
 

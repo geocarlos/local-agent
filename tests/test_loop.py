@@ -61,8 +61,8 @@ def test_plain_text_reply(fake_ollama, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_one_tool_call_round(fake_ollama, tmp_path):
-    target = tmp_path / "notes.txt"
+def test_one_tool_call_round(fake_ollama, workspace):
+    target = workspace / "notes.txt"
     target.write_text("file body", encoding="utf-8")
     client = fake_ollama([
         tool_reply(("read_file", {"path": str(target)})),
@@ -104,8 +104,8 @@ def test_tool_error_is_returned_to_model(fake_ollama, monkeypatch):
     assert [r.status for r in results] == ["failed", "failed"]
 
 
-def test_read_file_error_is_returned_to_model(fake_ollama, tmp_path):
-    missing = tmp_path / "missing.txt"
+def test_read_file_error_is_returned_to_model(fake_ollama, workspace):
+    missing = workspace / "missing.txt"
     client = fake_ollama([
         tool_reply(("read_file", {"path": str(missing)})),
         text_reply("that file does not exist"),
@@ -252,8 +252,8 @@ def test_thinking_is_emitted_as_an_event_and_kept_in_history(fake_ollama):
     assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "the answer"
 
 
-def test_settings_tool_limits_reach_the_tools(fake_ollama, tmp_path):
-    target = tmp_path / "long.txt"
+def test_settings_tool_limits_reach_the_tools(fake_ollama, workspace):
+    target = workspace / "long.txt"
     target.write_text("x" * 50, encoding="utf-8")
     client = fake_ollama([tool_reply(("read_file", {"path": str(target)})), text_reply("ok")])
     messages = start("read")

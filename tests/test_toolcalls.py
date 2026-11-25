@@ -108,8 +108,8 @@ def test_prose_braces_and_broken_blocks_are_plain_text(content):
 
 # --- through the loop: approvals and the history invariant still apply -------------
 
-def test_a_fenced_write_call_asks_for_approval_and_runs_after_yes(fake_ollama, tmp_path):
-    target = tmp_path / "out.txt"
+def test_a_fenced_write_call_asks_for_approval_and_runs_after_yes(fake_ollama, workspace):
+    target = workspace / "out.txt"
     call = {"name": "write_file", "arguments": {"path": str(target), "content": "hi"}}
     client = fake_ollama([text_reply("```json\n" + json.dumps(call) + "\n```"), text_reply("done")])
     events: list = []
@@ -134,8 +134,8 @@ def test_a_fenced_write_call_asks_for_approval_and_runs_after_yes(fake_ollama, t
     assert events[-1] == TurnDone(stop_reason="end_turn", text="done", rounds=2, usage=None)
 
 
-def test_a_fenced_write_call_is_refused_without_an_approver(fake_ollama, tmp_path):
-    target = tmp_path / "out.txt"
+def test_a_fenced_write_call_is_refused_without_an_approver(fake_ollama, workspace):
+    target = workspace / "out.txt"
     call = {"name": "write_file", "arguments": {"path": str(target), "content": "hi"}}
     client = fake_ollama([text_reply(json.dumps(call)), text_reply("ok")])
     messages = loop.new_messages()
@@ -147,8 +147,8 @@ def test_a_fenced_write_call_is_refused_without_an_approver(fake_ollama, tmp_pat
     assert messages[3] == {"role": "tool", "content": "User denied file write.", "tool_name": "write_file"}
 
 
-def test_a_read_call_in_text_runs_without_asking(fake_ollama, tmp_path):
-    target = tmp_path / "a.txt"
+def test_a_read_call_in_text_runs_without_asking(fake_ollama, workspace):
+    target = workspace / "a.txt"
     target.write_text("A", encoding="utf-8")
     client = fake_ollama([text_reply(json.dumps(READ | {"arguments": {"path": str(target)}})), text_reply("A")])
     messages = loop.new_messages()

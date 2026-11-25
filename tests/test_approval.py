@@ -38,8 +38,8 @@ def result_of(events) -> ToolResult:
     return next(e for e in events if isinstance(e, ToolResult))
 
 
-def test_write_granted_writes_the_file(fake_ollama, tmp_path):
-    target = tmp_path / "out.txt"
+def test_write_granted_writes_the_file(fake_ollama, workspace):
+    target = workspace / "out.txt"
     client = fake_ollama([
         tool_reply(("write_file", {"path": str(target), "content": "hi"})),
         text_reply("saved"),
@@ -59,8 +59,8 @@ def test_write_granted_writes_the_file(fake_ollama, tmp_path):
     assert result_of(events).status == "completed"
 
 
-def test_write_denied_leaves_the_file_alone(fake_ollama, tmp_path):
-    target = tmp_path / "out.txt"
+def test_write_denied_leaves_the_file_alone(fake_ollama, workspace):
+    target = workspace / "out.txt"
     client = fake_ollama([
         tool_reply(("write_file", {"path": str(target), "content": "hi"})),
         text_reply("ok, not written"),
@@ -115,8 +115,8 @@ def test_exec_denied_never_runs(fake_ollama, monkeypatch):
     assert result_of(events).status == "failed"
 
 
-def test_read_does_not_ask(fake_ollama, tmp_path):
-    target = tmp_path / "a.txt"
+def test_read_does_not_ask(fake_ollama, workspace):
+    target = workspace / "a.txt"
     target.write_text("body", encoding="utf-8")
     client = fake_ollama([
         tool_reply(("read_file", {"path": str(target)})),
@@ -130,8 +130,8 @@ def test_read_does_not_ask(fake_ollama, tmp_path):
     assert result_of(events).content == "body"
 
 
-def test_without_an_approver_risky_tools_are_refused(fake_ollama, tmp_path):
-    target = tmp_path / "out.txt"
+def test_without_an_approver_risky_tools_are_refused(fake_ollama, workspace):
+    target = workspace / "out.txt"
     client = fake_ollama([
         tool_reply(("write_file", {"path": str(target), "content": "x"})),
         text_reply("done"),
@@ -143,8 +143,8 @@ def test_without_an_approver_risky_tools_are_refused(fake_ollama, tmp_path):
     assert result_of(events).content == "User denied file write."
 
 
-def test_event_order_for_a_turn_with_a_write(fake_ollama, tmp_path):
-    target = tmp_path / "out.txt"
+def test_event_order_for_a_turn_with_a_write(fake_ollama, workspace):
+    target = workspace / "out.txt"
     client = fake_ollama([
         tool_reply(("write_file", {"path": str(target), "content": "x"})),
         text_reply("saved"),
@@ -165,8 +165,8 @@ def test_event_order_for_a_turn_with_a_write(fake_ollama, tmp_path):
     assert events[-1].stop_reason == "end_turn"
 
 
-def test_event_order_for_a_turn_with_a_read(fake_ollama, tmp_path):
-    target = tmp_path / "a.txt"
+def test_event_order_for_a_turn_with_a_read(fake_ollama, workspace):
+    target = workspace / "a.txt"
     target.write_text("body", encoding="utf-8")
     client = fake_ollama([
         tool_reply(("read_file", {"path": str(target)})),
@@ -233,12 +233,12 @@ class RaisingApprover:
         raise RuntimeError("approval UI crashed")
 
 
-def test_approver_that_raises_refuses_and_does_not_run(fake_ollama, tmp_path, monkeypatch):
+def test_approver_that_raises_refuses_and_does_not_run(fake_ollama, workspace, monkeypatch):
     def fail_if_run(*args, **kwargs):
         raise AssertionError("subprocess.run must not be called when the approver fails")
 
     monkeypatch.setattr(builtin.subprocess, "run", fail_if_run)
-    target = tmp_path / "out.txt"
+    target = workspace / "out.txt"
     client = fake_ollama([
         tool_reply(("write_file", {"path": str(target), "content": "x"})),
         tool_reply(("run_command", {"command": "echo nope"})),

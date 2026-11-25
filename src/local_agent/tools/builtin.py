@@ -2,7 +2,14 @@
 
 Tools never print or read input. The core asks the Approver before write and
 exec tools run, and the frontend renders the preview from the ApprovalRequest.
-Output limits and the command timeout come from the ToolContext the core passes in.
+Output limits, the command timeout and the workspace (the start folder of
+run_command) come from the ToolContext the core passes in.
+
+The path arguments of read_file and write_file are resolved and checked by the
+core before they run (see local_agent.sandbox), so these functions get absolute
+paths inside the workspace or an approved path outside it. run_command is not
+sandboxed beyond its start folder: a shell command can name any path, so it
+always asks first.
 """
 
 import subprocess
@@ -41,7 +48,7 @@ def _command_preview(command: str) -> Preview:
     return Preview(text=command, kind="command")
 
 
-@tool(risk=Risk.READ)
+@tool(risk=Risk.READ, paths=("path",))
 def read_file(path: str, context: ToolContext) -> str:
     """Read the contents of a file."""
     try:
@@ -55,6 +62,7 @@ def read_file(path: str, context: ToolContext) -> str:
     denied_message="User denied file write.",
     approval_title=_write_title,
     preview=_write_preview,
+    paths=("path",),
 )
 def write_file(path: str, content: str) -> str:
     """Write content to a file (asks for approval first)."""
@@ -83,6 +91,7 @@ def run_command(command: str, context: ToolContext) -> str:
             encoding="utf-8",
             errors="replace",
             timeout=context.command_timeout_s,
+            cwd=context.workspace,
         )
     except subprocess.TimeoutExpired:
         return f"Error: command timed out after {context.command_timeout_s}s and was killed."

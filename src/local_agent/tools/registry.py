@@ -13,6 +13,11 @@ description, which is what ollama's own function conversion produces.
 A tool that needs per-turn limits declares a parameter named `context` typed
 as ToolContext. The core fills it in; it is not part of the schema the model sees.
 
+A tool that takes a file path names the parameter in `paths=`, for example
+`paths=("path",)`. The core resolves those arguments against the workspace before
+the tool runs, and asks for a separate approval if one is outside it
+(see local_agent.sandbox). The tool then receives the resolved absolute path.
+
 A tool function must not print or read input. Approval is handled by the
 core (see core/loop.py) through permissions.Approver.
 """
@@ -20,8 +25,9 @@ core (see core/loop.py) through permissions.Approver.
 import inspect
 import types
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Annotated, Union, get_args, get_origin, get_type_hints
 
 from local_agent.config import DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_MAX_OUTPUT_CHARS
@@ -33,10 +39,11 @@ CONTEXT_PARAM = "context"
 
 @dataclass(frozen=True)
 class ToolContext:
-    """Limits the core passes to a tool call, taken from the settings for the turn."""
+    """Limits and the workspace the core passes to a tool call, taken from the settings for the turn."""
 
     command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS
+    workspace: Path = field(default_factory=Path.cwd)  # where run_command starts
 
 
 class Location(StrEnum):
@@ -131,6 +138,7 @@ class Tool:
     approval_title: Callable[..., str] | None
     preview: Callable[..., Preview | None] | None
     takes_context: bool = False
+    path_args: tuple[str, ...] = ()
 
     @property
     def kind(self) -> ToolKind:
@@ -196,12 +204,14 @@ def tool(
     denied_message: str | None = None,
     approval_title: Callable[..., str] | None = None,
     preview: Callable[..., Preview | None] | None = None,
+    paths: tuple[str, ...] = (),
     registry: dict[str, Tool] | None = None,
 ) -> Callable[[Callable[..., str]], Callable[..., str]]:
     """Register a function as a tool. The function is returned unchanged.
 
     `approval_title` and `preview` receive the same keyword arguments as the tool.
     `denied_message` is what the model receives when the user says no.
+    `paths` names the parameters that are file paths (each must be a `str` parameter).
     `registry` defaults to REGISTRY; tests pass their own dict.
     """
     risk = Risk(risk)
@@ -214,6 +224,12 @@ def tool(
         description = inspect.getdoc(fn)
         if not description:
             raise TypeError(f"tool {name!r} needs a docstring; it becomes the tool description")
+        hints = get_type_hints(fn, include_extras=True)
+        for arg in paths:
+            if arg not in hints:
+                raise TypeError(f"tool {name!r}: paths names {arg!r}, which is not a parameter")
+            if _strip_annotated(hints[arg])[0] is not str:
+                raise TypeError(f"tool {name!r}: path parameter {arg!r} must be str")
         table[name] = Tool(
             name=name,
             description=description,
@@ -225,6 +241,7 @@ def tool(
             approval_title=approval_title,
             preview=preview,
             takes_context=_takes_context(fn),
+            path_args=tuple(paths),
         )
         return fn
 

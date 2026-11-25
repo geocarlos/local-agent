@@ -42,7 +42,7 @@ Status: `todo` · `in progress` · `in review` · `done`
 - Fallback parser for tool calls printed as text (the `qwen2.5-coder:7b` case).
 - **Done when:** config precedence, capability warning and fallback parser are tested.
 
-### T05 Workspace sandbox: `todo`
+### T05 Workspace sandbox: `done`
 - Resolve all tool paths; anything outside the workspace root needs an explicit approval (and is denied in non-interactive contexts).
 - Handle `..`, absolute paths, symlinks/junctions, and drive-letter differences on Windows.
 - **Done when:** escape attempts are tested and blocked.

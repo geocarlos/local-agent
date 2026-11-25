@@ -78,8 +78,8 @@ def test_text_deltas_arrive_in_order_and_join_to_the_reply(fake_ollama):
     assert messages[-1].content == "hello there, friend"
 
 
-def test_tool_calls_split_across_chunks_are_collected(fake_ollama, tmp_path):
-    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+def test_tool_calls_split_across_chunks_are_collected(fake_ollama, workspace):
+    a, b = workspace / "a.txt", workspace / "b.txt"
     a.write_text("A", encoding="utf-8")
     b.write_text("B", encoding="utf-8")
     # chunked() puts each tool call in its own chunk, so the two calls only meet in the accumulator.
@@ -97,8 +97,8 @@ def test_tool_calls_split_across_chunks_are_collected(fake_ollama, tmp_path):
     assert_tool_calls_answered(messages)
 
 
-def test_tool_message_carries_tool_name(fake_ollama, tmp_path):
-    target = tmp_path / "a.txt"
+def test_tool_message_carries_tool_name(fake_ollama, workspace):
+    target = workspace / "a.txt"
     target.write_text("x", encoding="utf-8")
     client = fake_ollama([tool_reply(("read_file", {"path": str(target)})), text_reply("ok")])
     messages = start("read")
@@ -259,8 +259,8 @@ def test_ctrl_c_while_reporting_the_cancel_is_contained(fake_ollama):
     assert [m["role"] for m in messages] == ["system", "user"]
 
 
-def test_chunk_with_both_text_and_tool_calls_keeps_both(fake_ollama, tmp_path):
-    target = tmp_path / "a.txt"
+def test_chunk_with_both_text_and_tool_calls_keeps_both(fake_ollama, workspace):
+    target = workspace / "a.txt"
     target.write_text("A", encoding="utf-8")
     call = tool_reply(("read_file", {"path": str(target)})).message.tool_calls[0]
     client = FakeOllama([Stream([chunk(content="Checking. ", tool_calls=[call]), chunk(done=True)]), text_reply("A it is")])

@@ -74,8 +74,8 @@ def test_render_max_rounds_message(capsys):
     )
 
 
-def test_repl_write_with_y_then_exit(fake_ollama, monkeypatch, tmp_path, capsys):
-    target = tmp_path / "a.txt"
+def test_repl_write_with_y_then_exit(fake_ollama, monkeypatch, workspace, capsys):
+    target = workspace / "a.txt"
     answers = iter(["write it", "y", "exit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     client = fake_ollama([
@@ -93,8 +93,8 @@ def test_repl_write_with_y_then_exit(fake_ollama, monkeypatch, tmp_path, capsys)
     assert target.read_text(encoding="utf-8") == "hi"
 
 
-def test_repl_write_refused_with_n(fake_ollama, monkeypatch, tmp_path, capsys):
-    target = tmp_path / "a.txt"
+def test_repl_write_refused_with_n(fake_ollama, monkeypatch, workspace, capsys):
+    target = workspace / "a.txt"
     answers = iter(["write it", "n", "exit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     client = fake_ollama([
