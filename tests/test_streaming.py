@@ -129,8 +129,8 @@ def test_cancel_mid_stream_drops_the_partial_reply(fake_ollama):
     assert kinds(events)[-1] == "turn_done"
     assert events[-1].stop_reason == "cancelled"
     assert events[-1].text is None
-    # The partial reply never reached history; the user message is last.
-    assert [m["role"] for m in messages] == ["system", "user"]
+    # The partial reply never reached history, and with no reply recorded the user message is dropped.
+    assert [m["role"] for m in messages] == ["system"]  # no reply: the core drops the user message (T11)
     assert_tool_calls_answered(messages)
 
 
@@ -256,7 +256,7 @@ def test_ctrl_c_while_reporting_the_cancel_is_contained(fake_ollama):
     client = fake_ollama([text_reply("unused")])
 
     assert loop.run_turn(messages, client=client, emit=emit, cancel=cancel) is None  # no traceback
-    assert [m["role"] for m in messages] == ["system", "user"]
+    assert [m["role"] for m in messages] == ["system"]  # no reply: the core drops the user message (T11)
 
 
 def test_chunk_with_both_text_and_tool_calls_keeps_both(fake_ollama, workspace):
@@ -285,7 +285,7 @@ def test_ctrl_c_during_stream_cancels(fake_ollama):
 
     assert deltas(events) == ["he"]
     assert events[-1].stop_reason == "cancelled"
-    assert [m["role"] for m in messages] == ["system", "user"]
+    assert [m["role"] for m in messages] == ["system"]  # no reply: the core drops the user message (T11)
 
 
 # --- Ollama errors ---------------------------------------------------------
@@ -305,7 +305,7 @@ def test_ollama_down_emits_error_naming_the_host(client):
     assert "Cannot reach Ollama at http://127.0.0.1:1" in errors[0].message
     assert "ollama serve" in errors[0].message
     assert not any(isinstance(e, TurnDone) for e in events)  # an Error ends the turn
-    assert [m["role"] for m in messages] == ["system", "user"]
+    assert [m["role"] for m in messages] == ["system"]  # no reply: the core drops the user message (T11)
 
 
 def test_ollama_down_with_the_real_client_names_the_port():

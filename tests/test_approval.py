@@ -156,6 +156,7 @@ def test_event_order_for_a_turn_with_a_write(fake_ollama, workspace):
     assert [e.type for e in events] == [
         "tool_call",
         "approval_request",
+        "tool_started",
         "tool_result",
         "text_delta",
         "turn_done",
@@ -176,7 +177,7 @@ def test_event_order_for_a_turn_with_a_read(fake_ollama, workspace):
 
     _, events = run(client, RecordingApprover(Decision.REJECT_ONCE))
 
-    assert [e.type for e in events] == ["tool_call", "tool_result", "text_delta", "turn_done"]
+    assert [e.type for e in events] == ["tool_call", "tool_started", "tool_result", "text_delta", "turn_done"]
 
 
 def test_unknown_tool_is_reported_as_failed_without_approval(fake_ollama):

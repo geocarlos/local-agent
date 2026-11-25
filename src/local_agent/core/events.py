@@ -55,13 +55,27 @@ class ThinkingDelta:
 
 @dataclass(frozen=True)
 class ToolCall:
-    """The model asked for a tool. Sent before approval and execution."""
+    """The model asked for a tool. Sent before approval and execution.
+
+    `title` is a short human label for the call (ACP requires one); the core fills it with the
+    tool name and its arguments.
+    """
 
     tool_call_id: str
     name: str
     arguments: dict[str, Any]
     kind: ToolKind = "other"
+    title: str = ""
     type: ClassVar[str] = "tool_call"
+
+
+@dataclass(frozen=True)
+class ToolStarted:
+    """The tool is about to run (after any approval). Sent once per call that runs."""
+
+    tool_call_id: str
+    name: str
+    type: ClassVar[str] = "tool_started"
 
 
 @dataclass(frozen=True)
@@ -176,7 +190,7 @@ class Error:
     type: ClassVar[str] = "error"
 
 
-Event = TextDelta | ThinkingDelta | ToolCall | ToolResult | ApprovalRequest | TurnDone | Error
+Event = TextDelta | ThinkingDelta | ToolCall | ToolStarted | ToolResult | ApprovalRequest | TurnDone | Error
 
 EventSink = Callable[[Event], None]
 

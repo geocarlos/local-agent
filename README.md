@@ -43,12 +43,30 @@ uv run local-agent
 
 Type a request at the `You:` prompt. Type `exit` or `quit` to leave. Press Ctrl+C during a reply to cancel it.
 
+### Subcommands
+
+| Command | What it does |
+| --- | --- |
+| `local-agent` or `local-agent chat` | the terminal chat (the REPL above) |
+| `local-agent serve --stdio` | runs the agent as an Agent Client Protocol (ACP) server on stdin and stdout, for editors and other programs; see [docs/protocol.md](docs/protocol.md) |
+| `local-agent gui` | a placeholder for now: it prints that the GUI arrives in a later version and exits with code 2 |
+
+With no subcommand, every flag is a chat flag, so existing commands keep working. `chat` and `serve` take the same settings flags (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The subcommand must come first: `local-agent serve --stdio --cwd X`. `local-agent --cwd X serve --stdio` is refused with a message that says so. `local-agent --help` and `local-agent chat --help` list the subcommands.
+
 Flags override the config file and the environment for one run:
 
 ```sh
 uv run local-agent --model qwen3-vl:8b --num-ctx 8192
-uv run local-agent --cwd C:\src\my-project --config C:\tmp\alt.toml
+uv run local-agent chat --cwd C:\src\my-project --config C:\tmp\alt.toml
 uv run local-agent --profile minimal
+```
+
+### Serve mode (stdio)
+
+`local-agent serve --stdio` speaks JSON-RPC 2.0, one message per line, on stdin and stdout, with the ACP methods `initialize`, `session/new`, `session/prompt` and `session/cancel`. The agent sends `session/update` notifications while a turn runs and asks for approvals with `session/request_permission`. Logs and warnings go to stderr, so stdout carries only protocol lines. While the server runs, file descriptor 1 points at stderr too, so output from plugins and child processes (`os.system`, `subprocess`, direct writes) lands on stderr and cannot corrupt the protocol. The full message list, the permission flow, the error codes and the deviations from ACP are in [docs/protocol.md](docs/protocol.md). Session "allow always" answers are kept per session. MCP servers named in `session/new` are ignored; configure them in `config.toml`. A server keeps at most 64 sessions; each line is capped at 16 MiB. On shutdown (stdin closed or Ctrl+C) running turns get 10 s in total to stop; a turn still running after that is reported on stderr, and the MCP servers and plugins are closed.
+
+```sh
+uv run local-agent serve --stdio --cwd C:\src\my-project
 ```
 
 If Ollama is not running, you get `Error: Cannot reach Ollama at http://127.0.0.1:11434. Start it with ollama serve ...`. Start the server and send the request again. If the model is not installed, the error suggests `ollama pull qwen3-vl:8b`.
@@ -249,10 +267,12 @@ Entry points are loaded sorted by name, after the folder. A module that was alre
 
 ```
 src/local_agent/
-  __init__.py          # main() entry point: parses flags, loads settings, changes into the workspace
+  __init__.py          # main() entry point: subcommands chat, serve --stdio, gui (placeholder); parses flags, loads settings, changes into the workspace
+  __main__.py          # python -m local_agent
+  frontends/server.py  # serve --stdio: ACP over JSON-RPC lines; sessions, prompt turns on a worker thread, permission requests
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
-  core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_result, approval_request, turn_done, error), Usage
+  core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage
   core/model.py        # Ollama error messages, startup probe of the model's capabilities
   core/toolcalls.py    # fallback parser: tool calls printed as JSON text become real calls
   permissions.py       # risk tiers, approval policy (read auto-allowed), Approver protocol

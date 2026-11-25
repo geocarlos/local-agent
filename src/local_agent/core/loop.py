@@ -44,6 +44,7 @@ from local_agent.core.events import (
     ThinkingDelta,
     ToolCall,
     ToolResult,
+    ToolStarted,
     ToolStatus,
     TurnDone,
     Usage,
@@ -122,6 +123,11 @@ def run_turn(
     cancel = cancel if cancel is not None else threading.Event()
     session = session if session is not None else SessionApprovals()
     usage = _Usage()
+    # The user message this turn answers is the last one at entry. If the turn records no reply
+    # at all (an Ollama error, or a cancel before the first reply), it is removed, so sending the
+    # same text again does not put it into the history twice (TASKS.md, T04 and T11).
+    start = len(messages)
+    user_index = start - 1
     try:
         return _run_rounds(messages, client, settings, emit, approver, cancel, usage, session)
     except KeyboardInterrupt:
@@ -134,6 +140,9 @@ def run_turn(
         except KeyboardInterrupt:  # a second Ctrl+C while the cancel is reported: the history is already valid
             pass
         return None
+    finally:
+        if start > 0 and len(messages) == start and messages[user_index]["role"] == "user":
+            del messages[user_index]
 
 
 def _run_rounds(
@@ -274,7 +283,7 @@ def _run_calls(
         call_id = f"{round_no}.{index}"
         tool = tools.TOOLS.get(name)
         emit(ToolCall(tool_call_id=call_id, name=name, arguments=args,
-                      kind=tool.kind if tool else "other"))
+                      kind=tool.kind if tool else "other", title=_call_title(name, args)))
         blocked = profiles.blocked_message(name, tool, offered, settings)
         if cancel.is_set():
             content, status = CANCELLED_MESSAGE, "failed"
@@ -290,6 +299,17 @@ def _run_calls(
         emit(ToolResult(tool_call_id=call_id, name=name, content=content, status=status))
         messages.append({"role": "tool", "content": content, "tool_name": name})
     return cancel.is_set()
+
+
+TITLE_CHARS = 120
+
+
+def _call_title(name: str, arguments: dict) -> str:
+    """A short label for a tool call, for frontends that need one (ACP tool_call.title)."""
+    if not arguments:
+        return name
+    text = f"{name}({', '.join(f'{key}={value!r}' for key, value in arguments.items())})"
+    return text if len(text) <= TITLE_CHARS else text[:TITLE_CHARS - 3] + "..."
 
 
 def _answer_open_calls(messages: list) -> None:
@@ -360,6 +380,7 @@ def _run_tool(
                 return tool.denied_message, "failed"
             if decision is Decision.ALLOW_ALWAYS and "allow_always" in request.options:
                 session.allow(tool.name, workspace)
+        emit(ToolStarted(tool_call_id=call_id, name=name))
         return tool.call(args, tool_context), "completed"
     except ToolCancelled:  # a tool that stopped for a cancel (for example an MCP call), same answer as the core's own
         return CANCELLED_MESSAGE, "failed"
