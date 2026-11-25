@@ -56,7 +56,14 @@ from local_agent.permissions import Approver, DenyAll, SessionApprovals, needs_a
 from local_agent.tools import Location, Tool, profiles
 from local_agent.tools.registry import ToolCancelled, ToolContext
 
-SYSTEM_PROMPT = "You are a concise local coding assistant. Use tools to inspect and edit files."
+# Small models (qwen2.5-coder:7b) answered "Say hi to X" with run_command `echo` under the old one-line prompt
+# ("Use tools to inspect and edit files."). This wording keeps plain answers plain and still picks the right tool.
+SYSTEM_PROMPT = (
+    "You are a concise local coding assistant working in the user's project folder. "
+    "Reply in plain text when you can answer directly, such as greetings, explanations or code shown in the reply. "
+    "Call a tool only when you need to read, search or change files, or run a program the user asked for. "
+    "Never use run_command just to print or echo a message."
+)
 CANCELLED_MESSAGE = "Cancelled by user."
 
 
