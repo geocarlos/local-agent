@@ -11,16 +11,18 @@ Rules for every task:
 
 Status: `todo` · `in progress` · `in review` · `done`
 
-## M0: core refactor and hardening
+Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks done)
 
-### T01 Project layout and test harness: `done`
+## ✅ M0: core refactor and hardening
+
+### ✅ T01 Project layout and test harness: `done`
 - Create the target layout from PLAN.md §1 (`core/`, `tools/`, `frontends/`, `tests/`), moving the current code without changing behaviour.
 - Add pytest as a dev dependency and a fake Ollama client fixture that returns scripted responses (text and tool calls).
 - First tests: the existing loop handles one tool call round, a tool error, and the `MAX_TOOL_ROUNDS` cap, all without a real model.
 - GitHub Actions workflow on `windows-latest` running `uv sync` and `uv run pytest`.
 - **Done when:** `uv run local-agent` behaves as before and `uv run pytest` passes locally.
 
-### T02 Events, Approver and tool registry: `done`
+### ✅ T02 Events, Approver and tool registry: `done`
 - **Verify first:** whether the Agent Client Protocol fits the event set in PLAN.md §1. Record the decision (adopt, align names with it, or ignore) in the notes.
 - Event types from PLAN.md §1 and an `Approver` interface. The loop emits events and asks the approver; no `print` or `input` in core or tools.
 - `@tool` decorator: name, description, JSON schema derived from type hints, risk tier (`read`/`write`/`exec`/`network`), location (`core`/`client`).
@@ -28,13 +30,13 @@ Status: `todo` · `in progress` · `in review` · `done`
 - CLI frontend in `frontends/cli.py` renders events and answers approvals with `y/n`.
 - **Done when:** CLI behaves as today on the new interfaces; tests cover schema generation, approval denied/granted, and event order.
 
-### T03 Streaming, cancel and error handling: `done`
+### ✅ T03 Streaming, cancel and error handling: `done`
 - `stream=True` with `text_delta` events.
 - Cancel support; Ctrl+C mid-turn must not leave an assistant tool call without a tool result in history.
 - Clear message when Ollama is unreachable; include `tool_name` in tool messages.
 - **Done when:** tests cover cancel mid-tool-round and Ollama-down; CLI streams text.
 
-### T04 Config, context window and model checks: `done`
+### ✅ T04 Config, context window and model checks: `done`
 - **Verify first:** Ollama's default `num_ctx` for the installed version.
 - Per-user TOML config via `platformdirs` (model, host, `num_ctx`, limits, workspace root); CLI flags override it.
 - Set `num_ctx` explicitly; track token use from response metadata.
@@ -42,14 +44,14 @@ Status: `todo` · `in progress` · `in review` · `done`
 - Fallback parser for tool calls printed as text (the `qwen2.5-coder:7b` case).
 - **Done when:** config precedence, capability warning and fallback parser are tested.
 
-### T05 Workspace sandbox: `done`
+### ✅ T05 Workspace sandbox: `done`
 - Resolve all tool paths; anything outside the workspace root needs an explicit approval (and is denied in non-interactive contexts).
 - Handle `..`, absolute paths, symlinks/junctions, and drive-letter differences on Windows.
 - **Done when:** escape attempts are tested and blocked.
 
-## M1: more tools
+## ☑️ M1: more tools
 
-### T06 Read-tier tools: `done`
+### ✅ T06 Read-tier tools: `done`
 - `read_file` with line ranges, `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`. Auto-allowed, sandboxed, output truncated.
 - **Done when:** each tool has a test against a temp workspace (git tools against a temp repo).
 
