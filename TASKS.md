@@ -104,7 +104,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Bind `127.0.0.1` only, random per-launch token, `Origin` check.
 - **Done when:** tests reject missing token, wrong token, and foreign `Origin`, and drive a turn over WebSocket.
 
-### T16 Web frontend: chat: `in review`
+### ✅ T16 Web frontend: chat: `done`
 - Standalone static app (built assets in `src/local_agent/web/`, reusable in VS Code): streaming chat, tool-call cards, approval dialog with diff view.
 - **Done when:** a chat with an approved edit works in a browser against the T15 server.
 
