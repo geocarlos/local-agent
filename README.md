@@ -7,6 +7,7 @@ A small command-line coding assistant that runs entirely on local models through
 - **Local models only**: talks to your Ollama server, so code and prompts stay on your machine.
 - **Tool calling**: the model can use `read_file` (optional line range), `list_dir`, `glob`, `grep`, `git_status`, `git_diff`, `git_log`, `edit_file` (replace one exact occurrence), `write_file`, `run_command`, `run_tests`, `git_commit` and, off by default, `web_fetch` (see Tool profiles). The read tools run without asking. Models that print a tool call as text instead (for example `qwen2.5-coder:7b`) are handled too.
 - **Tool profiles**: `minimal` (read tools only), `coding` (the default: read, write and exec tools) or `all` (adds `web_fetch` when it is switched on). Smaller sets suit small models. Tool descriptions are kept short to save context.
+- **MCP servers**: tools from stdio servers that speak the Model Context Protocol, listed in the config and offered as `<server>__<tool>`. They always ask unless the config sets a lower risk tier. See MCP servers.
 - **Approval gates**: every write, edit, command, test run, commit and web fetch asks first. `y` allows once, `n` refuses, and `a` (where offered) allows the same tool in this workspace for the rest of the session. Writes and edits show a diff, commands show the command line and its shell. `git_commit` always asks (see Safety).
 - **Workspace sandbox**: file paths resolve against the workspace folder. A path outside it, including through `..`, a junction or a symlink, asks on its own, even for reads, and only `y` or `n` is accepted there. Without an answer of `y` it is refused.
 - **Guard rails**: commands and tests time out after 60 s (the processes they started are killed too), tool output is truncated at 8000 characters, and each turn is capped at 10 tool rounds. All three are configurable.
@@ -86,7 +87,7 @@ network_enabled = false             # true offers web_fetch under the all profil
 | `num_ctx` | `--num-ctx` | `8192` | Context window in tokens, sent to Ollama with every request. Minimum 512. |
 | `max_tool_rounds` | | `10` | Max model/tool rounds per user message |
 | `max_output_chars` | | `8000` | Max characters of tool output sent to the model |
-| `command_timeout_s` | | `60` | Timeout for shell commands and test runs, in seconds. On timeout the command and the processes it started are killed. |
+| `command_timeout_s` | | `60` | Timeout for shell commands and test runs, in seconds. On timeout the command and the processes it started are killed. It also limits MCP server start-up and each MCP call. |
 | `test_command` | | (none) | Command that `run_tests` runs when the call gives none, run through cmd. Without it, `run_tests` uses `uv run pytest -q` when the workspace has a `pyproject.toml`, or `npm test` when it has a `package.json`. |
 | `workspace` | `--cwd` | the current folder | The workspace folder. Relative file paths resolve against it, `run_command` starts in it, and paths outside it need approval (see Safety). `--cwd` also changes into it. |
 | `tool_profile` | `--profile` | `coding` | Which tools the model is offered: `minimal`, `coding` or `all`. See Tool profiles. |
@@ -113,6 +114,36 @@ An unknown profile name is a config error (exit code 2), as is an unknown value 
 
 Model notes: `qwen3-vl:8b` makes structured tool calls. `qwen2.5-coder:7b` prints its calls as JSON text; the agent turns those into real tool calls when the reply is only the call (see `core/toolcalls.py`). Replies that mix prose and a call are not converted.
 
+### MCP servers
+
+The agent can use tools from MCP servers. Each server is a program that speaks the Model Context Protocol over stdio. Add one per `[mcp_servers.<name>]` table in the config. Each server is started when the agent starts, its tools are listed, and they are offered to the model with the built-in tools. Only stdio servers are supported for now.
+
+```toml
+[mcp_servers.files]
+command = "uvx"                 # the program to start
+args = ["some-server"]          # optional
+env = { KEY = "value" }         # optional, added to the environment the server gets (see Environment below)
+cwd = "C:\\src\\my-project"     # optional, the server's start folder (a relative path is taken from the config file's folder)
+risk = "exec"                   # optional, the tier for all its tools: read, write, exec or network (default exec)
+enabled = true                  # optional; false leaves the server out
+
+[mcp_servers.files.tools.some_tool]
+risk = "read"                   # optional, the tier for this tool only
+```
+
+- **Names.** A tool is named `<server>__<tool>`, for example `files__some_tool`. Server names use letters, digits and hyphens. In a tool name, any character other than a letter, digit, `_` or `-` becomes `_`, and the name is cut to 64 characters. A tool whose name is already taken is skipped with a warning, and so is a tool with an argument named `context` (the agent uses that name itself).
+- **Risk tiers.** The default is `exec`, so each call asks first. The question shows the server, the tool and the arguments as JSON. `read` tools run without asking. `write` and `exec` tools can be allowed for the session, per tool and per workspace, the same as `run_command`. `network` tools are off unless `network_enabled = true`, like `web_fetch`, and are never allowed for the session.
+- **Profiles.** MCP tools are filtered by tier like the built-in tools. The `coding` profile offers `exec` tools and `minimal` offers only `read` tools. Set a server's tier to `read` to offer its tools under `minimal`.
+- **Start-up and failures.** Servers start together. A server that does not start, or does not list its tools within `command_timeout_s`, prints a warning with the last lines it wrote to stderr, and the agent starts without it. A server that exits during a session makes its calls return an error result, and the agent keeps running. A call that runs past `command_timeout_s` is cancelled and reported as an error, and Ctrl+C cancels it. Servers are stopped when the REPL exits.
+- **Results.** Text is passed to the model as it is. Images, audio, resource links and binary resources are shown as one short line each. An error reported by the server comes back as `Error: ...`. Output is capped by `max_output_chars`.
+- **Environment.** A server does not inherit the whole environment. The MCP SDK passes only a safe subset: on Windows `APPDATA`, `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `PATH`, `PATHEXT`, `PROCESSOR_ARCHITECTURE`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `USERNAME`, `USERPROFILE`; elsewhere `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`. Anything else must be set in the server's `env` table, for example API keys, `VIRTUAL_ENV` or `PYTHONPATH`.
+- **Limits.** `command_timeout_s` (60 s by default) is the one time limit for start-up and for each call. The approval preview is cut at 1500 characters; the `[Tool Call]` line shows the full arguments. Arguments are not checked against the schema by the agent; the server does that. Nested fields of an object are not sent to the model (see Schemas).
+- **Not sandboxed.** An MCP tool runs in the server's own process, so the workspace path rules do not apply to it. The server decides what it can reach.
+- **Display.** Names and text from a server that appear on the terminal (warnings, the approval title and preview, and the stderr shown for a server that did not start) have control characters shown as escapes such as `\x1b`, so a server cannot clear the screen or add a line to the approval. A tool description is sent to the model with control characters replaced by spaces.
+- **Schemas.** Each property is passed to the model with only its type, items, description and enum, because the ollama client keeps no other keys. An `Optional` (`anyOf` with `null`) becomes its type, a `$ref` to a definition in the same schema is inlined one level (a cycle leaves only the description), and a title becomes the description when there is none. Nested fields of an object are not sent, so the model sees such a field as an object with its description.
+
+The official `mcp` Python SDK (2.x) does the protocol work. It negotiates the protocol version with each server, and servers that only know the older `initialize` handshake also work.
+
 ## Project layout
 
 ```
@@ -125,7 +156,9 @@ src/local_agent/
   core/toolcalls.py    # fallback parser: tool calls printed as JSON text become real calls
   permissions.py       # risk tiers, approval policy (read auto-allowed), Approver protocol
   sandbox.py           # resolves path arguments against the workspace; inside, outside or refused
-  tools/registry.py    # @tool decorator (risk, paths=), JSON schema from type hints, Tool objects, ToolContext
+  mcp_hub.py           # MCP client runtime: stdio servers on one background thread with its own asyncio loop
+  tools/registry.py    # @tool decorator (risk, paths=), add_tool (explicit schema), JSON schema from type hints, Tool objects, ToolContext
+  tools/mcp_tools.py   # MCP servers' tools: <server>__<tool> names, risk tiers from the config, results as text
   tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
   tools/builtin.py     # read_file (read), write_file (write), run_command and run_tests (exec; cmd by default, or PowerShell)
   tools/edit_tools.py  # edit_file (write): exact-match replace, line endings and BOM, unified diff for previews
@@ -156,6 +189,10 @@ tests/
   test_session_approvals.py # "allow for this session": per tool and workspace, never outside paths, .git writes or git_commit
   test_profiles.py     # tool profiles and the network switch: what the model is offered, refusals without asking, short descriptions
   test_web_fetch.py    # web_fetch with a mock transport: asks every time, URL refusals, size and redirect caps, HTML to text
+  test_mcp_config.py   # [mcp_servers] validation: the example, defaults, bad names, keys and risk values
+  test_mcp_tools.py    # MCP naming and sanitising, name collisions, reserved argument, descriptions, result text
+  test_mcp_runtime.py  # real stdio servers in tests/mcp_servers: listing, risk tiers, calls, errors, timeout, cancel, exit, shutdown
+  test_cli_mcp.py      # REPL with MCP servers: start-up warnings, argument preview, stop at exit and at Ctrl+C
 .github/workflows/ci.yml  # pytest on windows-latest
 ```
 
@@ -225,6 +262,7 @@ The agent works in one folder, the **workspace**: the folder you start it from, 
   - a write or edit whose path has a `.git` folder in it (hooks and config, in any case), which asks every time,
   - `git_commit`, which asks every time.
 - **`web_fetch` is the only network tool.** It is off unless `network_enabled = true` is set in the config. When on, it asks every time (no "allow for this session"). It accepts only `http` and `https` URLs without a username or password, makes one plain `GET` per page with no cookies or credentials, and sends the User-Agent `local-agent/<version>`. Redirects are followed by hand (at most 5, each target checked), the body is read up to 2 MB, and `network_timeout_s` is a limit on the whole fetch, redirects included, as well as on each connect or read. A redirect from a public host to a local or private address (`localhost`, a loopback, private, link-local or similar IP address, or a name with no dot) is refused; the model is told to call `web_fetch` with that URL, so the user is asked. Such a fetch is labelled "local/private address" in the approval, and the approval shows a note. Proxy settings from the environment are used, except for `localhost` and loopback addresses, which are always reached directly. Host names are not resolved, so a public name that points at a private address is not caught. The page's text reaches the model, so a fetched page can try to steer it: read the URL before answering `y`.
+- **MCP tools** run in their server's own process, so the workspace and path rules do not cover them. Each call asks first (exec tier by default), and its preview shows the server, the tool and the arguments. Only the server's tier decides whether it asks: a server or tool set to `read` runs without a question, so set `read` only for servers you trust.
 - **Not detected**: a hard link inside the workspace that points at a file outside it looks like an inside path. A file swapped for a link after the check is a race that is not closed.
 Windows path cases are covered by `tests/test_sandbox.py`: case and drive-letter case, `C:foo`, `\foo`, UNC, `\\?\` and `\\?\UNC\`, 8.3 short names, junctions (created with `mklink /J` in the test; skipped with a reason if that is not allowed), prefix tricks such as `work-evil` next to `work`, and symlinks (skipped here: Windows refused to create one without Developer Mode or admin).
 

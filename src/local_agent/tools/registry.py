@@ -10,6 +10,9 @@ dict, and `X | None` (optional). A parameter's description comes from
 `Annotated[str, "description"]`; without one the schema carries an empty
 description, which is what ollama's own function conversion produces.
 
+A tool whose schema is not built from a signature (the MCP tools) is registered with
+`add_tool`, which takes the parameters schema as given.
+
 A tool that needs per-turn limits declares a parameter named `context` typed
 as ToolContext. The core fills it in; it is not part of the schema the model sees.
 
@@ -31,6 +34,7 @@ core (see core/loop.py) through permissions.Approver.
 """
 
 import inspect
+import threading
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -46,6 +50,10 @@ CONTEXT_PARAM = "context"
 ONE_TIME_OPTIONS = ("allow_once", "reject_once")  # offered when a call may not be allowed for the session
 
 
+class ToolCancelled(Exception):
+    """Raised by a tool that stopped because the turn was cancelled. The core answers "Cancelled by user."."""
+
+
 @dataclass(frozen=True)
 class ToolContext:
     """Limits, the workspace and test command the core passes to a tool call, taken from the settings for the turn."""
@@ -55,6 +63,7 @@ class ToolContext:
     workspace: Path = field(default_factory=Path.cwd)  # where run_command starts
     test_command: str | None = None                   # the configured test_command, if any
     network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S  # web_fetch: limit for the whole fetch, and per connect or read
+    cancel: threading.Event | None = None             # set when the turn is cancelled; long tools may poll it
 
 
 class Location(StrEnum):
@@ -210,9 +219,11 @@ class Tool:
         except TypeError as e:
             raise TypeError(f"{self.name}() {e}") from None
         # Literal parameters are enums in the schema; a value outside them is refused before the user is asked.
-        properties = self.parameters["properties"]
+        # MCP schemas may have "properties": null or a boolean property schema; neither lists choices.
+        properties = self.parameters.get("properties") or {}
         for name, value in arguments.items():
-            choices = properties.get(name, {}).get("enum")
+            prop = properties.get(name)
+            choices = prop.get("enum") if isinstance(prop, Mapping) else None
             if choices is not None and value is not None and value not in choices:
                 raise TypeError(f"{self.name}() argument {name!r} must be one of {choices}, got {value!r}")
 
@@ -254,6 +265,45 @@ class Tool:
 
 
 REGISTRY: dict[str, Tool] = {}
+
+
+def add_tool(
+    *,
+    name: str,
+    description: str,
+    parameters: dict[str, Any],
+    fn: Callable[..., str],
+    risk: Risk,
+    approval_title: Callable[..., str] | None = None,
+    preview: Callable[..., Preview | None] | None = None,
+    allow_always: bool = True,
+    takes_context: bool = False,
+    registry: dict[str, Tool] | None = None,
+) -> Tool:
+    """Register a tool whose schema is given, not built from `fn`'s type hints (used for MCP tools).
+
+    `fn` is called with the model's arguments as keyword arguments, plus `context` when
+    `takes_context` is set. The name must not be registered already. Returns the Tool.
+    """
+    table = REGISTRY if registry is None else registry
+    if name in table:
+        raise ValueError(f"tool {name!r} is already registered")
+    registered = Tool(
+        name=name,
+        description=description,
+        parameters=parameters,
+        fn=fn,
+        risk=Risk(risk),
+        location=Location.CORE,
+        denied_message=f"User denied {name}.",
+        approval_title=approval_title,
+        preview=preview,
+        precheck_hook=None,
+        allow_always=allow_always,
+        takes_context=takes_context,
+    )
+    table[name] = registered
+    return registered
 
 
 def tool(
