@@ -97,9 +97,9 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - GitHub Actions builds the exe and installer on tag push and attaches them to a GitHub Release.
 - **Done when:** workflow is valid (lint/dry-run) and documented.
 
-## M3: GUI
+## ☑️ M3: GUI
 
-### T15 Local web server: `in review`
+### ✅ T15 Local web server: `done`
 - FastAPI + WebSocket streaming the same events as stdio.
 - Bind `127.0.0.1` only, random per-launch token, `Origin` check.
 - **Done when:** tests reject missing token, wrong token, and foreign `Origin`, and drive a turn over WebSocket.
