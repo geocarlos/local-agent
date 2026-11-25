@@ -33,6 +33,7 @@ from local_agent.core.events import (
 )
 from local_agent.core.model import OLLAMA_ERRORS, describe_error, probe
 from local_agent.permissions import SessionApprovals
+from local_agent.tools import mcp_tools
 
 CONTEXT_WARNING_FRACTION = 0.9  # warn when the prompt uses this share of num_ctx
 
@@ -93,6 +94,8 @@ class Renderer:
             preview = event.preview
             if preview is not None and preview.kind == "text" and preview.path is not None:
                 print(f"\n[PROPOSED CONTENT for '{preview.path}']\n{preview.text}\n[END PROPOSED CONTENT]")
+            elif preview is not None and preview.kind == "text":  # no path: for example an MCP call's arguments
+                print(f"\n[PREVIEW]\n{preview.text}\n[END PREVIEW]")
             elif preview is not None and preview.kind == "diff":
                 label = f" for '{preview.path}'" if preview.path is not None else ""
                 print(f"\n[PROPOSED CHANGES{label}]\n{preview.text}\n[END PROPOSED CHANGES]")
@@ -167,33 +170,45 @@ def _startup_checks(client, settings: Settings) -> None:
 
 
 def run(settings: Settings | None = None, client: loop.ChatClient | None = None) -> None:
-    """Interactive REPL. `settings` defaults to Settings() (no file or environment is read)."""
+    """Interactive REPL. `settings` defaults to Settings() (no file or environment is read).
+
+    The MCP servers in `settings.mcp_servers` are started first and stopped when the REPL exits.
+    """
     settings = Settings() if settings is None else settings
     if client is None:
         client = ollama.Client(host=settings.host)
     messages = loop.new_messages()
     approver = TerminalApprover()
     session = SessionApprovals()  # "allow always" answers last until this REPL exits
-
-    print(f"Local Agent ready ({settings.model}). Type 'exit' to quit.")
-    _startup_checks(client, settings)
-    while True:
-        try:
-            user_input = input("\nYou: ").strip()
-        except KeyboardInterrupt:
-            print()
-            break
-        if user_input.lower() in {"exit", "quit"}:
-            break
-        start = len(messages)
-        messages.append({"role": "user", "content": user_input})
-        # Ctrl+C during the turn is handled by the core: the turn ends as cancelled and the prompt returns.
-        loop.run_turn(messages, client=client, settings=settings,
-                      emit=Renderer(settings.num_ctx), approver=approver, session=session)
-        if len(messages) == start + 1:
-            # No reply was recorded (an Ollama error, or Ctrl+C before one): drop the message
-            # so that sending it again does not put it into the history twice.
-            del messages[start]
+    try:
+        mcp = mcp_tools.start_mcp_servers(settings.mcp_servers, timeout_s=settings.command_timeout_s)
+    except KeyboardInterrupt:  # Ctrl+C while the servers start: nothing is running yet
+        print()
+        return
+    try:
+        for line in mcp.warnings:
+            print(line)
+        print(f"Local Agent ready ({settings.model}). Type 'exit' to quit.")
+        _startup_checks(client, settings)
+        while True:
+            try:
+                user_input = input("\nYou: ").strip()
+            except KeyboardInterrupt:
+                print()
+                break
+            if user_input.lower() in {"exit", "quit"}:
+                break
+            start = len(messages)
+            messages.append({"role": "user", "content": user_input})
+            # Ctrl+C during the turn is handled by the core: the turn ends as cancelled and the prompt returns.
+            loop.run_turn(messages, client=client, settings=settings,
+                          emit=Renderer(settings.num_ctx), approver=approver, session=session)
+            if len(messages) == start + 1:
+                # No reply was recorded (an Ollama error, or Ctrl+C before one): drop the message
+                # so that sending it again does not put it into the history twice.
+                del messages[start]
+    finally:
+        mcp.close()
 
 
 if __name__ == "__main__":

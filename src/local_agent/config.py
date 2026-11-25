@@ -11,6 +11,7 @@ Nothing here reads a global: callers pass `env` and `config_file` explicitly
 """
 
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -33,12 +34,33 @@ DEFAULT_NETWORK_TIMEOUT_S = 20
 # The tool profiles (names only; what each one offers is in tools/profiles.py).
 TOOL_PROFILES = ("minimal", "coding", "all")
 DEFAULT_TOOL_PROFILE = "coding"
+# MCP servers (see TASKS.md T09): the risk tiers a server or one of its tools may be set to.
+MCP_RISKS = ("read", "write", "exec", "network")
+DEFAULT_MCP_RISK = "exec"  # always ask, unless the config says otherwise
+MCP_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,31}")  # no underscore: "__" separates server and tool
 
 MIN_NUM_CTX = 512
 
 
 class ConfigError(ValueError):
     """A setting has an invalid value, or the config file cannot be read or parsed."""
+
+
+@dataclass(frozen=True)
+class McpServer:
+    """One stdio MCP server, from a `[mcp_servers.<name>]` table. Started by tools/mcp_tools.py."""
+
+    name: str
+    command: str
+    args: tuple[str, ...] = ()
+    # The server gets only a small safe subset of this process's environment (PATH, the home and temp
+    # folders, and so on; see mcp.client.stdio.get_default_environment), plus these. API keys and
+    # VIRTUAL_ENV or PYTHONPATH are not passed on unless set here.
+    env: Mapping[str, str] | None = None
+    cwd: Path | None = None
+    risk: str = DEFAULT_MCP_RISK          # default tier for this server's tools
+    enabled: bool = True
+    tool_risks: Mapping[str, str] = field(default_factory=dict)  # per-tool override, by the server's tool name
 
 
 @dataclass(frozen=True)
@@ -59,6 +81,8 @@ class Settings:
     network_enabled: bool = False
     # web_fetch's time limit for the whole fetch (redirects included), and for each connect or read.
     network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S
+    # MCP servers started at launch, by name (see TASKS.md T09). Empty: none.
+    mcp_servers: Mapping[str, McpServer] = field(default_factory=dict)
     # Relative tool paths resolve against it, and paths outside it need approval (see sandbox.py).
     workspace: Path = field(default_factory=Path.cwd)
 
@@ -162,7 +186,66 @@ def _check(key: str, value: Any, *, source: str, base: Path | None = None) -> An
         return value.strip()
     if key == "workspace":
         return _directory(value, source, base)
+    if key == "mcp_servers":
+        return _mcp_servers(value, source, base)
     raise ConfigError(f"unknown setting {key!r}")
+
+
+_MCP_SERVER_KEYS = ("command", "args", "env", "cwd", "risk", "enabled", "tools")
+
+
+def _mcp_servers(value: Any, source: str, base: Path | None) -> dict[str, McpServer]:
+    """Validate the [mcp_servers] table. `source` is the file and key (for messages)."""
+    if not isinstance(value, dict):
+        raise ConfigError(f"{source} must be a table of servers, got {value!r}")
+    return {name: _mcp_server(name, table, f"{source}.{name}", base) for name, table in value.items()}
+
+
+def _mcp_server(name: str, table: Any, source: str, base: Path | None) -> McpServer:
+    if not MCP_NAME_PATTERN.fullmatch(name):
+        raise ConfigError(f"{source}: a server name may use letters, digits and hyphens only (got {name!r})")
+    if not isinstance(table, dict):
+        raise ConfigError(f"{source} must be a table with at least command, got {table!r}")
+    unknown = sorted(set(table) - set(_MCP_SERVER_KEYS))
+    if unknown:
+        known = ", ".join(_MCP_SERVER_KEYS)
+        raise ConfigError(f"{source}: unknown setting(s) {', '.join(unknown)} (known: {known})")
+    if "command" not in table:
+        raise ConfigError(f"{source}.command is required")
+    command = table["command"]
+    if not isinstance(command, str) or not command.strip():
+        raise ConfigError(f"{source}.command must be a non-empty program name, got {command!r}")
+    args = table.get("args", [])
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        raise ConfigError(f"{source}.args must be a list of strings, got {args!r}")
+    env = table.get("env")
+    if env is not None:
+        if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+            raise ConfigError(f"{source}.env must be a table of string values, got {env!r}")
+    cwd = table.get("cwd")
+    if cwd is not None:
+        cwd = _directory(cwd, f"{source}.cwd", base)
+    risk = table.get("risk", DEFAULT_MCP_RISK)
+    _check_risk(risk, f"{source}.risk")
+    enabled = table.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"{source}.enabled must be true or false, got {enabled!r}")
+    tools = table.get("tools", {})
+    if not isinstance(tools, dict):
+        raise ConfigError(f"{source}.tools must be a table of tool names, got {tools!r}")
+    tool_risks: dict[str, str] = {}
+    for tool_name, tool_table in tools.items():
+        if not isinstance(tool_table, dict) or set(tool_table) != {"risk"}:
+            raise ConfigError(f"{source}.tools.{tool_name} must be a table with only risk, got {tool_table!r}")
+        _check_risk(tool_table["risk"], f"{source}.tools.{tool_name}.risk")
+        tool_risks[tool_name] = tool_table["risk"]
+    return McpServer(name=name, command=command.strip(), args=tuple(args), env=env, cwd=cwd, risk=risk,
+                     enabled=enabled, tool_risks=tool_risks)
+
+
+def _check_risk(value: Any, source: str) -> None:
+    if not isinstance(value, str) or value not in MCP_RISKS:
+        raise ConfigError(f"{source} must be one of {', '.join(MCP_RISKS)}, got {value!r}")
 
 
 def _int_at_least(key: str, value: Any, minimum: int, source: str) -> int:

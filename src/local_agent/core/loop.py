@@ -53,7 +53,7 @@ from local_agent.core.model import OLLAMA_ERRORS, describe_error
 from local_agent.core.toolcalls import parse_text_tool_calls
 from local_agent.permissions import Approver, DenyAll, SessionApprovals, needs_approval
 from local_agent.tools import Location, Tool, profiles
-from local_agent.tools.registry import ToolContext
+from local_agent.tools.registry import ToolCancelled, ToolContext
 
 SYSTEM_PROMPT = "You are a concise local coding assistant. Use tools to inspect and edit files."
 CANCELLED_MESSAGE = "Cancelled by user."
@@ -150,7 +150,8 @@ def _run_rounds(
                                max_output_chars=settings.max_output_chars,
                                workspace=settings.workspace,
                                test_command=settings.test_command,
-                               network_timeout_s=settings.network_timeout_s)
+                               network_timeout_s=settings.network_timeout_s,
+                               cancel=cancel)
     # The tools offered this turn (by the profile and the network switch). Calls to others are refused.
     offered = profiles.offered_tools(tools.TOOLS, settings)
     for round_no in range(1, settings.max_tool_rounds + 1):
@@ -359,6 +360,8 @@ def _run_tool(
             if decision is Decision.ALLOW_ALWAYS and "allow_always" in request.options:
                 session.allow(tool.name, workspace)
         return tool.call(args, tool_context), "completed"
+    except ToolCancelled:  # a tool that stopped for a cancel (for example an MCP call), same answer as the core's own
+        return CANCELLED_MESSAGE, "failed"
     except Exception as e:
         return f"Error calling {name} with arguments {args}: {type(e).__name__}: {e}", "failed"
 
