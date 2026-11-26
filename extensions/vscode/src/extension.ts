@@ -53,6 +53,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
     localResourceRoots: [bundle],
   });
   panel = current;
+  current.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "tab-icon.png");
   current.webview.html = pageHtml(context, current.webview, bundle);
   const tools = new EditorTools();
   editorTools = tools;
