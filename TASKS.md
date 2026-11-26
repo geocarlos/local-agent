@@ -135,13 +135,13 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - `vsce package` produces a `.vsix`; uses `wildcat-code-agent` from PATH, with a setting to override the path. Install docs for each Windows account.
 - **Done when:** the `.vsix` installs with `code --install-extension` and works against the installed app.
 
-## M5: license and short command
+## ✅ M5: license and short command
 
 ### ✅ T23 License: `done`
 - Apache License 2.0 for the repository and the VS Code extension.
 - **Done when:** `LICENSE` is in the repo, the wheel declares it, and the `.vsix` carries it without a vsce warning.
 
-### T24 `wca` command alias: `in review`
+### ✅ T24 `wca` command alias: `done`
 - `wca` is a second name for `wildcat-code-agent`: the same program and the same subcommands and flags. The long name stays the main one (exe names, installer, extension default, docs).
 - An entry point in `pyproject.toml`; a `wca.exe` in the frozen build and the installer, next to `wildcat-code-agent.exe`, so it is on PATH after an install. Help and error text name the command the user typed.
 - **Done when:** `uv run wca --help` works, and the built app and the installer both have `wca.exe` that runs the same program.
@@ -866,3 +866,9 @@ Findings from **verify** items and follow-ups go here, by task id.
   - Each EXE is about 13.2 MB, so the third exe adds about 13 MB to the folder and the installer (the cause was not investigated; a smaller launcher or a shared stub would be the fix).
   - `SUBCOMMANDS_HELP` still says `gui` is "a placeholder until a later version" (out of date since T18). Not changed here.
   - The `test_gui_window.py` Ctrl+C failure (see T19, T22) is still not investigated.
+
+**Review of T24 (approved)**
+- **Reviewer confirmed:** `tests/test_main.py`, `test_installer.py`, `test_release_workflow.py`: 110 passed; `tests/test_frozen_exe.py` against the built dist: 3 passed. `wca.exe --help` and `WCA.EXE --help` print `usage: wca`; `uv run wca` does too (the uv/pip console-script trampoline sets argv[0] to `...\Scripts\wca.exe`). The third EXE reuses the console analysis and PYZ and lands in the same folder; MERGE and the two other exes are unchanged.
+- **Size (checked in PyInstaller's source, decided: accept):** `EXE(append_pkg=True)` embeds the PKG (with the ~12.8 MB PYZ) in every exe. With `append_pkg=False` the PKG becomes `<exe name>.pkg` beside it, so `wca` would still need its own copy; nothing is shared. A smaller alias needs a different mechanism (a tiny launcher that starts `wildcat-code-agent.exe`, which changes Ctrl+C and argv handling): a separate task if the 13 MB matters.
+- **Fixed:** README's T18/T24 bullet now says the smoke script checks the subsystem of all three exes.
+- **Kept as is:** an unknown argv[0] (a renamed copy, `python -m`, a hand-made script) shows the long name in help text.
