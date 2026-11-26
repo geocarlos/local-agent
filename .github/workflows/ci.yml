@@ -19,5 +19,14 @@ jobs:
       - name: Install Python and dependencies
         run: uv sync --locked
 
+      # The real-window test is not a hard gate yet (T18 review): it runs in its own step below.
       - name: Run tests
-        run: uv run --locked pytest
+        run: uv run --locked pytest --ignore=tests/test_gui_window.py
+
+      # Non-blocking: learns whether the pywebview window works on windows-latest. It skips when no
+      # desktop or WebView2 runtime is there; LOCAL_AGENT_REQUIRE_WINDOW=1 makes a missing backend a failure.
+      - name: Real window test (non-blocking)
+        continue-on-error: true
+        env:
+          LOCAL_AGENT_REQUIRE_WINDOW: "1"
+        run: uv run --locked pytest tests/test_gui_window.py -v

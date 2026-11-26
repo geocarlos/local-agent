@@ -159,6 +159,28 @@ def test_a_server_that_does_not_start_is_an_error_and_no_window_opens(tmp_path, 
     assert "Error: the plugins or MCP servers did not start: boom" in errors
 
 
+def test_ctrl_c_during_start_up_stops_the_server_and_opens_no_window(tmp_path, monkeypatch):
+    stopped = []
+    real_stop = web.WebServer.stop
+
+    def interrupted(self, timeout_s=0):
+        raise KeyboardInterrupt
+
+    def record_stop(self):
+        stopped.append(True)
+        real_stop(self)
+
+    monkeypatch.setattr(web.WebServer, "start", interrupted)
+    monkeypatch.setattr(web.WebServer, "stop", record_stop)
+    opened = []
+
+    code, _ = _run(tmp_path, opened.append)
+
+    assert code == 0
+    assert opened == []
+    assert stopped == [True]  # the plugins and MCP servers are closed by stop
+
+
 def test_show_window_without_the_backend_says_so(monkeypatch):
     monkeypatch.setitem(sys.modules, "webview", None)  # an import of webview now fails
 
@@ -223,6 +245,38 @@ def test_ensure_streams_replaces_missing_streams_with_a_log_file(tmp_path, monke
         for stream in replaced:
             with contextlib.suppress(Exception):
                 stream.close()
+
+
+def _open_log_streams(tmp_path, monkeypatch, *, limit: int) -> list:
+    """Run ensure_streams the way the windowed exe does (both streams missing); return the streams to close."""
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(gui, "GUI_LOG_MAX_BYTES", limit)
+    gui.ensure_streams(tmp_path)
+    return [sys.stdout, sys.stderr]
+
+
+def test_gui_log_appends_per_start_and_moves_a_big_one_aside(tmp_path, monkeypatch):
+    log = tmp_path / gui.GUI_LOG_NAME
+    log.write_text("earlier run\n", encoding="utf-8")
+    streams = _open_log_streams(tmp_path, monkeypatch, limit=1000)  # small: appended to
+    try:
+        print("this run", file=sys.stderr, flush=True)
+    finally:
+        for stream in streams:
+            with contextlib.suppress(Exception):
+                stream.close()
+    text = log.read_text(encoding="utf-8")
+    assert text.startswith("earlier run\n")
+    assert "--- local-agent gui started " in text and "this run" in text
+    assert not (tmp_path / (gui.GUI_LOG_NAME + ".1")).exists()
+
+    streams = _open_log_streams(tmp_path, monkeypatch, limit=10)  # now over the limit: moved aside
+    for stream in streams:
+        with contextlib.suppress(Exception):
+            stream.close()
+    assert (tmp_path / (gui.GUI_LOG_NAME + ".1")).read_text(encoding="utf-8").startswith("earlier run\n")
+    assert "earlier run" not in log.read_text(encoding="utf-8")
 
 
 def test_ensure_streams_does_nothing_with_a_console(tmp_path, monkeypatch):
