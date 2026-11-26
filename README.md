@@ -610,7 +610,7 @@ The release has four files:
 
 - `wildcat-code-agent-<version>-setup.exe`: the machine-wide installer (see "Building the installer").
 - `wildcat-code-agent-<version>-win-x64.zip`: the app folder, unzipped to `wildcat-code-agent-<version>-win-x64\` with `wildcat-code-agent.exe` and `_internal\`. Nothing is installed; run the exe from any folder.
-- `wildcat-code-agent-vscode-<version>.vsix`: the VS Code extension, built by `npm run package` in `extensionsscode` (the version is the extension's, in its `package.json`). Install it in each account (see "VS Code extension").
+- `wildcat-code-agent-vscode-<version>.vsix`: the VS Code extension, built by `npm run package` in `extensions/vscode` (the version is the extension's, in its `package.json`). Install it in each account (see "VS Code extension").
 - `SHA256SUMS.txt`: the SHA-256 of all three files, in `sha256sum` format. To check a download in Git Bash, run `sha256sum -c SHA256SUMS.txt` in the folder that holds the files. In PowerShell, compare `Get-FileHash <file> -Algorithm SHA256` with the line for that file.
 
 A tag with a suffix, such as `v0.2.0-rc1`, becomes a pre-release. Its `pyproject.toml` version must be the same suffixed string.

@@ -116,7 +116,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - `wildcat-code-agent gui` opens the web UI in a `pywebview` window; included in the T12 build and T13 installer.
 - **Done when:** `wildcat-code-agent gui` opens a window to chat, see tool calls, and approve or deny writes.
 
-## M4: VS Code extension
+## ✅ M4: VS Code extension
 
 ### ✅ T19 Extension scaffold and chat panel: `done`
 - **Verify first:** current VS Code Chat Participant API shape (for the later option; the first UI is our own webview).
@@ -131,7 +131,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - "Add selection to chat", `@file` mentions, open files and diagnostics as context.
 - **Done when:** asking about the open file uses its content without the model calling `read_file`.
 
-### T22 Extension packaging: `in review`
+### ✅ T22 Extension packaging: `done`
 - `vsce package` produces a `.vsix`; uses `wildcat-code-agent` from PATH, with a setting to override the path. Install docs for each Windows account.
 - **Done when:** the `.vsix` installs with `code --install-extension` and works against the installed app.
 
@@ -822,3 +822,8 @@ Findings from **verify** items and follow-ups go here, by task id.
   - Marketplace publishing (`vsce publish`, a publisher token) is not set up; the `.vsix` is for direct install only.
   - The e2e suite cannot start the agent (no way to drive the webview). A check that starts the packaged agent from inside VS Code would need a debug hook; not done.
   - The `@vscode/vsce-sign` postinstall did not run here (npm's install-scripts policy). `vsce package` worked without it here; the CI `extension` job (Linux, Node 26) will show whether it is needed.
+
+**Review of T22 (approved)**
+- **Fixed:** README's Releasing section had a vertical-tab byte in `extensions\vscode` (the `\v` was read as an escape); it now says `extensions/vscode`. No other control characters in README.md, TASKS.md or extensions/vscode/README.md.
+- **Reviewer confirmed:** the .vsix (27 files) holds every module `out/src` requires, every file the webview loads, and both icons; its `webview/` is byte-identical to `src/wildcat_code_agent/web`; no sources, tests, maps or local paths. The setup-node pin `49933ea` is the `v4` tag. Installed in an isolated profile.
+- **Follow-ups (nits, not done):** the packaged `out/src/*.js` keep `sourceMappingURL` comments for maps that are not shipped (harmless); a missing `cwd` also gives ENOENT, so the not-found message can blame the command when the workspace folder was deleted; `vsce package` warns about the missing LICENSE (add `--skip-license` if CI ever waits on it, or add a LICENSE once one is chosen).
