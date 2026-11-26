@@ -1,0 +1,55 @@
+{
+  "name": "local-agent-vscode",
+  "displayName": "local-agent",
+  "description": "Chat with the local-agent coding assistant (Ollama) in a VS Code panel.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "publisher": "local-agent",
+  "engines": {
+    "vscode": "^1.146.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "localAgent.openChat",
+        "title": "local-agent: Open chat"
+      }
+    ],
+    "configuration": {
+      "title": "local-agent",
+      "properties": {
+        "localAgent.command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "local-agent"
+          ],
+          "markdownDescription": "The command that starts the agent. `serve --stdio` and `--cwd <workspace folder>` are added. The default `local-agent` must be on PATH. For development from the repo, use `[\"uv\", \"run\", \"--project\", \"C:\\path\\to\\local-agent\", \"local-agent\"]`. Reload the window after a change."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "copy-webview": "node scripts/copy-webview.mjs",
+    "compile": "npm run copy-webview && tsc -p ./",
+    "build": "npm run compile",
+    "pretest": "npm run compile",
+    "test": "node --test \"out/test/*.test.js\" \"test/*.test.mjs\"",
+    "test:e2e": "npm run compile && node out/test-e2e/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "@types/vscode": "~1.146.0",
+    "@vscode/test-electron": "^3.1.0",
+    "typescript": "~5.9.3"
+  }
+}

@@ -9,7 +9,7 @@
 import { AcpClient } from "./acp.js";
 import { ChatView } from "./chat.js";
 import { fillSettings, readSettings, renderModelOption, renderSessionList } from "./panels.js";
-import { connectWebSocket } from "./transport.js";
+import { connectHostLink, connectWebSocket } from "./transport.js";
 
 const PROTOCOL_VERSION = 1;
 const LIST_PAGE = "session/list";
@@ -35,6 +35,16 @@ async function fetchInfo(token) {
     throw new Error("local-agent did not accept the token. Open the address that local-agent printed.");
   }
   return response.json();
+}
+
+// The browser (and pywebview) link: the T15 WebSocket, with the token. Resolves with {link, cwd}.
+async function openBrowserLink(token) {
+  const info = await fetchInfo(token);
+  if (info.protocolVersion !== PROTOCOL_VERSION) {
+    throw new Error(`local-agent speaks protocol ${info.protocolVersion}; this page needs ${PROTOCOL_VERSION}.`);
+  }
+  const link = await connectWebSocket(socketUrl(token));
+  return { link, cwd: info.cwd };
 }
 
 // The page's state: the connection, the open session and the panels. The screen is in ChatView.
@@ -75,12 +85,9 @@ class App {
     this.settingsOpen.disabled = this.dead || !this.sessionId;
   }
 
-  async connect(token) {
-    const info = await fetchInfo(token);
-    if (info.protocolVersion !== PROTOCOL_VERSION) {
-      throw new Error(`local-agent speaks protocol ${info.protocolVersion}; this page needs ${PROTOCOL_VERSION}.`);
-    }
-    const link = await connectWebSocket(socketUrl(token));
+  // `open` returns {link, cwd}: openBrowserLink (browser, pywebview) or connectHostLink (VS Code webview).
+  async connect(open) {
+    const { link, cwd } = await open();
     this.client = new AcpClient(link);
     this.client.onUpdate = (update) => this.view.update(update);
     this.client.onPermission = (params) => this.view.askPermission(params);
@@ -95,8 +102,8 @@ class App {
     }
     this.canList = Boolean(init.agentCapabilities && init.agentCapabilities.sessionCapabilities &&
       init.agentCapabilities.sessionCapabilities.list);
-    this.cwd = info.cwd;
-    this.view.workspace.textContent = info.cwd;
+    this.cwd = cwd;
+    this.view.workspace.textContent = cwd;
     return this.client;
   }
 
@@ -298,9 +305,9 @@ class App {
     this.settingsForm.addEventListener("submit", (event) => this.saveSettings(event));
   }
 
-  async start(token) {
+  async start(open) {
     try {
-      await this.connect(token);
+      await this.connect(open);
     } catch (error) {
       this.view.setStatus("Not connected", "bad");
       this.view.showNotice(error.message);
@@ -333,10 +340,16 @@ export function readToken(hash) {
 
 const view = new ChatView(document);
 const app = new App(view, document);
-const token = readToken(location.hash);
-if (!token) {
-  view.setStatus("No token", "bad");
-  view.showNotice("This page needs the token. Open the link that local-agent printed (it ends in #token=...).");
+// In a VS Code webview acquireVsCodeApi exists and there is no token: the extension host is the link (T19).
+const vscodeApi = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
+if (vscodeApi) {
+  app.start(() => connectHostLink(vscodeApi));
 } else {
-  app.start(token);
+  const token = readToken(location.hash);
+  if (!token) {
+    view.setStatus("No token", "bad");
+    view.showNotice("This page needs the token. Open the link that local-agent printed (it ends in #token=...).");
+  } else {
+    app.start(() => openBrowserLink(token));
+  }
 }

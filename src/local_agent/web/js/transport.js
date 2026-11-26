@@ -10,6 +10,56 @@
 
 export class LinkError extends Error {}
 
+// The VS Code webview link (T19). The extension host starts `local-agent serve --stdio` and relays each JSON line:
+//   webview -> host: {type: "ready"} once, then {type: "send", text} for each message
+//   host -> webview: {type: "init", cwd} once the agent runs, {type: "message", text} for each line from it,
+//                    {type: "closed", reason} when the agent is gone (before init it is a failed connect)
+// Resolves with {link, cwd} on init. `api` is acquireVsCodeApi(); `win` is the window (its message events).
+export function connectHostLink(api, win = window) {
+  return new Promise((resolve, reject) => {
+    let ready = false;
+    let closed = false;
+    const link = {
+      onMessage: null,
+      onClose: null,
+      send(text) {
+        if (closed) {
+          throw new LinkError("The connection to local-agent is closed.");
+        }
+        api.postMessage({ type: "send", text });
+      },
+    };
+    const end = (reason) => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      win.removeEventListener("message", onHostMessage);
+      if (!ready) {
+        reject(new LinkError(reason));
+      } else if (link.onClose) {
+        link.onClose(reason);
+      }
+    };
+    const onHostMessage = (event) => {
+      const data = event.data;
+      if (!data || typeof data !== "object" || closed) {
+        return;
+      }
+      if (data.type === "init" && !ready) {
+        ready = true;
+        resolve({ link, cwd: String(data.cwd || "") });
+      } else if (data.type === "message" && typeof data.text === "string" && link.onMessage) {
+        link.onMessage(data.text);
+      } else if (data.type === "closed") {
+        end(typeof data.reason === "string" ? data.reason : "The connection was closed.");
+      }
+    };
+    win.addEventListener("message", onHostMessage);
+    api.postMessage({ type: "ready" });
+  });
+}
+
 // Opens the agent WebSocket. Resolves with a link once the socket is open; rejects if it cannot open.
 // A refused connection (wrong token, foreign origin) is closed by the server before accept, so the browser
 // reports it as a failed connection with no reason; the caller shows the generic message.
