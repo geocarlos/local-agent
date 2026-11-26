@@ -38,7 +38,9 @@ from typing import Any, TextIO
 
 import ollama
 
-from local_agent.config import Settings
+from local_agent import config as config_module
+from local_agent import config_write, sessions
+from local_agent.config import ConfigError, Settings
 from local_agent.core import loop
 from local_agent.core.events import (
     ApprovalRequest,
@@ -54,7 +56,7 @@ from local_agent.core.events import (
 )
 from local_agent.core.model import OLLAMA_ERRORS, describe_error, probe
 from local_agent.permissions import SessionApprovals
-from local_agent.tools import mcp_tools, plugins
+from local_agent.tools import TOOLS, mcp_tools, plugins
 
 PROTOCOL_VERSION = 1
 JSONRPC = "2.0"
@@ -85,6 +87,16 @@ MAX_SESSIONS = 64
 MAX_LINE_CHARS = 16 * 1024 * 1024
 # Stands for a line over MAX_LINE_CHARS that the bounded reader discarded.
 OVERSIZE_LINE = object()
+# The model list and the model check call Ollama with a limit, so a silent Ollama cannot hang session/new.
+OLLAMA_CALL_TIMEOUT_S = 5.0
+# session/list returns this many sessions per page.
+LIST_PAGE_SIZE = 50
+# The one session config option: the model. Its values are the models Ollama has.
+MODEL_OPTION_ID = "model"
+# Extension methods (ACP reserves names starting with "_"; see docs/protocol.md).
+EXT_MODELS = "_local-agent/models"
+EXT_SETTINGS_GET = "_local-agent/settings/get"
+EXT_SETTINGS_SET = "_local-agent/settings/set"
 
 
 class TransportClosed(ValueError):
@@ -131,6 +143,24 @@ def _agent_version() -> str:
         return "0.0.0"
 
 
+def _tools_warning(model: str) -> str:
+    return (f"Model '{model}' does not report the 'tools' capability. Tool calls may not work. "
+            "Use a model with tool support, for example qwen3-vl:8b.")
+
+
+def _optional_abs_path(value: Any, name: str) -> str | None:
+    """An absolute path from a request field that may be absent (None), or -32602."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not os.path.isabs(value):
+        raise ProtocolError(INVALID_PARAMS, f"Invalid params: {name} must be an absolute path.")
+    return value
+
+
+def _same_folder(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
 @dataclass
 class _Session:
     session_id: str
@@ -140,6 +170,7 @@ class _Session:
     cancel: threading.Event = field(default_factory=threading.Event)
     busy: bool = False                     # a prompt turn is running
     turn: int = 0                          # counts prompts, so tool call ids stay unique in the session
+    created: str = field(default_factory=lambda: sessions.now_iso())  # ISO 8601, kept when the session is saved
 
 
 @dataclass
@@ -226,12 +257,16 @@ class StdioServer:
     """
 
     def __init__(self, settings: Settings, *, client: Any, reader: Iterable[str], writer: TextIO,
-                 log: Callable[[str], None]) -> None:
+                 log: Callable[[str], None], store: sessions.SessionStore | None = None,
+                 config_file: Path | None = None) -> None:
         self._settings = settings
         self._client = client
         self._reader = reader
         self._writer = writer
         self._log = log
+        # Saved sessions (T17) and the config file the settings editor writes (default: the per-user one).
+        self._store = store if store is not None else sessions.SessionStore(sessions.sessions_folder(), log=log)
+        self._config_file = config_file if config_file is not None else config_module.config_path()
         self._write_lock = threading.Lock()
         self._lock = threading.Lock()  # guards sessions, pending requests, the initialized flag and busy flags
         self._sessions: dict[str, _Session] = {}
@@ -317,6 +352,12 @@ class StdioServer:
             "initialize": self._initialize,
             "session/new": self._new_session,
             "session/prompt": self._prompt,
+            "session/list": self._list_sessions,
+            "session/load": self._load_session,
+            "session/set_config_option": self._set_config_option,
+            EXT_MODELS: self._models,
+            EXT_SETTINGS_GET: self._settings_get,
+            EXT_SETTINGS_SET: self._settings_set,
         }
         handler = handlers.get(method)
         if handler is None:
@@ -368,7 +409,8 @@ class StdioServer:
         self._send(_result(request_id, {
             "protocolVersion": PROTOCOL_VERSION,
             "agentCapabilities": {
-                "loadSession": False,
+                "loadSession": True,
+                "sessionCapabilities": {"list": {}},
                 "promptCapabilities": {"image": False, "audio": False, "embeddedContext": False},
             },
             "authMethods": [],
@@ -397,7 +439,10 @@ class StdioServer:
                 raise ProtocolError(INVALID_REQUEST, f"Too many sessions: this server keeps at most {MAX_SESSIONS} "
                                                      "per process. Start another server for more.")
             self._sessions[session.session_id] = session
-        self._send(_result(request_id, {"sessionId": session.session_id}))
+        # The session is saved after its first turn (an empty session is not listed). The model choices come
+        # from Ollama; if it is down, the answer still comes, with a warning.
+        self._send(_result(request_id, {"sessionId": session.session_id,
+                                        **self._options_result(session.settings)}))
 
     def _prompt(self, request_id: Any, params: dict) -> None:
         self._require_initialized()
@@ -423,6 +468,239 @@ class StdioServer:
             raise ProtocolError(RESOURCE_NOT_FOUND, "Session not found.", {"sessionId": sid})
         return session
 
+    # ----- saved sessions (T17) --------------------------------------------------------------------
+
+    def _list_sessions(self, request_id: Any, params: dict) -> None:
+        self._require_initialized()
+        cwd = _optional_abs_path(params.get("cwd"), "cwd")
+        cursor = params.get("cursor")
+        if cursor is None:
+            offset = 0
+        elif isinstance(cursor, str) and cursor.isdigit():
+            offset = int(cursor)
+        else:
+            raise ProtocolError(INVALID_PARAMS, "Invalid params: cursor is not one returned by session/list.")
+        items = [s for s in self._store.list_sessions() if cwd is None or _same_folder(s.cwd, cwd)]
+        page = items[offset:offset + LIST_PAGE_SIZE]
+        sessions_out = []
+        for item in page:
+            entry: dict[str, Any] = {"sessionId": item.session_id, "cwd": item.cwd, "updatedAt": item.updated,
+                                     "_meta": {"model": item.model}}
+            if item.title:
+                entry["title"] = item.title
+            sessions_out.append(entry)
+        result: dict[str, Any] = {"sessions": sessions_out}
+        if offset + LIST_PAGE_SIZE < len(items):
+            result["nextCursor"] = str(offset + LIST_PAGE_SIZE)
+        self._send(_result(request_id, result))
+
+    def _load_session(self, request_id: Any, params: dict) -> None:
+        self._require_initialized()
+        sid = params.get("sessionId")
+        if not isinstance(sid, str):
+            raise ProtocolError(INVALID_PARAMS, "Invalid params: sessionId must be a string.")
+        asked_cwd = _optional_abs_path(params.get("cwd"), "cwd")
+        with self._lock:
+            live = self._sessions.get(sid)
+            if live is not None and live.busy:
+                raise ProtocolError(INVALID_REQUEST, "A prompt is already running in this session.")
+        if live is not None:
+            session = live  # still in this process: its history is in memory and is the same as its file
+        else:
+            session = self._restore_session(sid, asked_cwd)
+        self._replay(session)
+        self._send(_result(request_id, self._options_result(session.settings)))
+
+    def _restore_session(self, sid: str, asked_cwd: str | None) -> _Session:
+        try:
+            record = self._store.load(sid)
+        except sessions.SessionError:
+            raise ProtocolError(RESOURCE_NOT_FOUND, "Session not found.", {"sessionId": sid}) from None
+        folder = Path(record.cwd)
+        if not folder.is_dir():
+            raise ProtocolError(INVALID_PARAMS, f"Invalid params: the session's folder no longer exists: {record.cwd}. "
+                                                "The session cannot be opened here.")
+        if asked_cwd is not None and not _same_folder(record.cwd, asked_cwd):
+            raise ProtocolError(INVALID_PARAMS, "Invalid params: cwd is not the session's saved folder.")
+        session = _Session(session_id=sid,
+                           settings=dataclasses.replace(self._settings, workspace=folder, model=record.model),
+                           messages=record.messages, created=record.created)
+        with self._lock:
+            existing = self._sessions.get(sid)
+            if existing is not None:
+                return existing
+            if len(self._sessions) >= MAX_SESSIONS:
+                raise ProtocolError(INVALID_REQUEST, f"Too many sessions: this server keeps at most {MAX_SESSIONS} "
+                                                     "per process. Start another server for more.")
+            self._sessions[sid] = session
+        return session
+
+    def _replay(self, session: _Session) -> None:
+        """Send the saved history as session/update notifications, the way a live turn shows it."""
+        sid = session.session_id
+        open_calls: list[str] = []  # tool call ids waiting for their result, in order
+        count = 0
+        for message in session.messages:
+            role = message.get("role")
+            if role == "user":
+                self.notify_update(sid, {"sessionUpdate": "user_message_chunk", "content": _text(message.get("content") or ""),
+                                         "messageId": uuid.uuid4().hex})
+            elif role == "assistant":
+                if message.get("content"):
+                    self.notify_update(sid, {"sessionUpdate": "agent_message_chunk",
+                                             "content": _text(message["content"]), "messageId": uuid.uuid4().hex})
+                for call in message.get("tool_calls") or []:
+                    count += 1
+                    call_id = f"r{count}"
+                    name = call["function"]["name"]
+                    args = dict(call["function"].get("arguments") or {})
+                    tool = TOOLS.get(name)
+                    open_calls.append(call_id)
+                    self.notify_update(sid, {"sessionUpdate": "tool_call", "toolCallId": call_id,
+                                             "title": loop._call_title(name, args),
+                                             "kind": tool.kind if tool else "other", "status": "pending",
+                                             "rawInput": args})
+            elif role == "tool" and open_calls:
+                call_id = open_calls.pop(0)
+                status = "failed" if message.get("content") == loop.CANCELLED_MESSAGE else "completed"
+                self.notify_update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": call_id,
+                                         "status": status,
+                                         "content": [{"type": "content", "content": _text(message.get("content") or "")}]})
+
+    def _save_session(self, session: _Session) -> None:
+        """Save the session's history after a turn. A failed save is a warning: the chat goes on."""
+        if not any(isinstance(m, dict) and m.get("role") == "user" for m in session.messages):
+            return
+        try:
+            self._store.save(session_id=session.session_id, cwd=str(session.settings.workspace),
+                             model=session.settings.model, created=session.created, messages=session.messages)
+        except (sessions.SessionError, OSError) as e:
+            self._log(f"Warning: session {session.session_id} was not saved: {e}")
+
+    # ----- models (T17) ---------------------------------------------------------------------------
+
+    def _bounded(self, fn: Callable[..., Any], *args: Any) -> Any:
+        """Run one Ollama call with OLLAMA_CALL_TIMEOUT_S as its limit. A call that does not answer in time is a
+        ConnectionError (the message then says Ollama cannot be reached)."""
+        box: dict[str, Any] = {}
+
+        def run() -> None:
+            try:
+                box["value"] = fn(*args)
+            except BaseException as e:  # handed back to the caller's thread below
+                box["error"] = e
+
+        worker = threading.Thread(target=run, name="ollama-call", daemon=True)
+        worker.start()
+        worker.join(OLLAMA_CALL_TIMEOUT_S)
+        if worker.is_alive():
+            raise ConnectionError(f"Ollama did not answer within {OLLAMA_CALL_TIMEOUT_S:g} s")
+        if "error" in box:
+            raise box["error"]
+        return box["value"]
+
+    def _model_names(self) -> list[str]:
+        response = self._bounded(self._client.list)
+        return sorted({m.model for m in response.models if m.model})
+
+    def _tools_status(self, model: str) -> bool | None:
+        """True or False when Ollama reports the model's capabilities, None when it reports none."""
+        capabilities = self._bounded(self._client.show, model).capabilities
+        if not capabilities:
+            return None
+        return "tools" in capabilities
+
+    def _options_result(self, settings: Settings, *, names: list[str] | None = None) -> dict:
+        """The session setup answer: the model option (its choices from Ollama) and warnings in _meta.
+
+        Ollama down: the option holds only the current model, and the warning says why. A model without the
+        tools capability gets a warning too, so the UI can show it (T04)."""
+        warnings: list[str] = []
+        current = settings.model
+        status: bool | None = None
+        choices = names
+        try:
+            if choices is None:
+                choices = self._model_names()
+            status = self._tools_status(current)
+        except OLLAMA_ERRORS as e:
+            warnings.append(describe_error(e, settings))
+        if status is False:
+            warnings.append(_tools_warning(current))
+        options = sorted(set(choices or []) | {current})
+        model_option = {"id": MODEL_OPTION_ID, "name": "Model", "category": "model", "type": "select",
+                        "currentValue": current, "options": [{"value": name, "name": name} for name in options]}
+        meta: dict[str, Any] = {"model": {"name": current, "tools": status}}
+        if warnings:
+            meta["warnings"] = warnings
+        return {"configOptions": [model_option], "_meta": meta}
+
+    def _set_config_option(self, request_id: Any, params: dict) -> None:
+        self._require_initialized()
+        session = self._session_of(params, required=True)
+        if params.get("configId") != MODEL_OPTION_ID:
+            raise ProtocolError(INVALID_PARAMS, "Invalid params: configId must be \"model\" (the only option).")
+        value = params.get("value")
+        if not isinstance(value, str) or not value.strip():
+            raise ProtocolError(INVALID_PARAMS, "Invalid params: value must be a model name.")
+        model = value.strip()
+        with self._lock:
+            if session.busy:
+                raise ProtocolError(INVALID_REQUEST, "A prompt is already running in this session.")
+        try:
+            self._tools_status(model)  # show() also proves the model is installed: it fails otherwise
+        except OLLAMA_ERRORS as e:
+            message = describe_error(e, dataclasses.replace(session.settings, model=model))
+            if isinstance(e, ollama.ResponseError) and e.status_code == 404:
+                raise ProtocolError(INVALID_PARAMS, message) from None
+            raise ProtocolError(INTERNAL_ERROR, message, {"kind": "ollama"}) from None
+        with self._lock:
+            if session.busy:
+                raise ProtocolError(INVALID_REQUEST, "A prompt is already running in this session.")
+            session.settings = dataclasses.replace(session.settings, model=model)
+        self._send(_result(request_id, self._options_result(session.settings)))
+
+    def _models(self, request_id: Any, params: dict) -> None:
+        self._require_initialized()
+        session = self._session_of(params)
+        current = session.settings.model if session is not None else self._settings.model
+        try:
+            names = self._model_names()
+        except OLLAMA_ERRORS as e:
+            self._send(_result(request_id, {"current": current, "models": [], "error": describe_error(e, self._settings)}))
+            return
+        self._send(_result(request_id, {"current": current, "models": names, "error": None}))
+
+    # ----- settings (T17) -------------------------------------------------------------------------
+
+    def _settings_get(self, request_id: Any, params: dict) -> None:
+        self._require_initialized()
+        self._send(_result(request_id, self._settings_result()))
+
+    def _settings_set(self, request_id: Any, params: dict) -> None:
+        self._require_initialized()
+        values = params.get("values")
+        if not isinstance(values, dict):
+            raise ProtocolError(INVALID_PARAMS, "Invalid params: values must be an object of setting names and values.")
+        try:
+            config_write.write_editable(self._config_file, values)
+        except ConfigError as e:
+            raise ProtocolError(INVALID_PARAMS, f"Invalid params: {e}") from None
+        except OSError as e:
+            raise ProtocolError(INTERNAL_ERROR, f"Cannot write the config file: {e}") from None
+        self._send(_result(request_id, self._settings_result(saved=True)))
+
+    def _settings_result(self, *, saved: bool = False) -> dict:
+        try:
+            values = config_write.read_editable(self._config_file)
+        except ConfigError as e:
+            raise ProtocolError(INVALID_PARAMS, str(e)) from None
+        result: dict[str, Any] = {"file": str(self._config_file), "exists": self._config_file.exists(),
+                                  "values": values, "kinds": dict(config_write.EDITABLE), "applies": "restart"}
+        if saved:
+            result["saved"] = True
+        return result
+
     # ----- the turn --------------------------------------------------------------------------------
 
     def _run_turn(self, session: _Session, request_id: Any, turn: int, text: str) -> None:
@@ -433,6 +711,7 @@ class StdioServer:
             session.messages.append({"role": "user", "content": text})
             loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
                           approver=approver, cancel=session.cancel, session=session.approvals)
+            self._save_session(session)  # before the answer, so a session/list that follows shows it
             outcome = events.outcome
             if isinstance(outcome, TurnDone):
                 response = _result(request_id, _prompt_result(outcome))
@@ -571,7 +850,8 @@ def running_agent(settings: Settings, *, client: Any, log: Callable[[str], None]
 
 
 def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str] | None = None,
-                writer: TextIO | None = None, errors: TextIO | None = None) -> None:
+                writer: TextIO | None = None, errors: TextIO | None = None,
+                store: sessions.SessionStore | None = None, config_file: Path | None = None) -> None:
     """Run the stdio server until stdin ends. Plugins and MCP servers start first and close last.
 
     With no `writer`, the real stdout carries the protocol and the process's own stdout is pointed at
@@ -601,7 +881,8 @@ def serve_stdio(settings: Settings, *, client: Any = None, reader: Iterable[str]
     try:
         with contextlib.redirect_stdout(errors), running_agent(settings, client=client, log=log):
             try:
-                StdioServer(settings, client=client, reader=reader, writer=writer, log=log).serve()
+                StdioServer(settings, client=client, reader=reader, writer=writer, log=log, store=store,
+                            config_file=config_file).serve()
             except KeyboardInterrupt:  # Ctrl+C ends the server like EOF does
                 pass
     finally:

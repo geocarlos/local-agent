@@ -173,3 +173,54 @@ pre.code .line.meta { color: var(--muted); }
   .layout { padding: 16px; }
   .actions button { flex: 1; }
 }
+
+/* ----- T17: model picker, session drawer, settings ------------------------------------------------ */
+
+.bar-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-left: auto; }
+.model-pick select {
+  font: inherit; padding: 0.35rem 0.5rem; border-radius: 6px; max-width: 14rem;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+}
+.muted { color: var(--muted); font-size: 0.9rem; margin: 0; overflow-wrap: anywhere; }
+.ok-text { color: var(--ok-text); }
+.error-text { color: var(--error-text); }
+
+.shell { display: flex; min-height: calc(100vh - 3.5rem); }
+
+/* Phone width: the drawer is a panel over the chat, opened from the Sessions button. */
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 10; width: min(320px, 86vw); overflow: auto;
+  background: var(--panel); border-right: 1px solid var(--border); padding: 16px;
+  display: flex; flex-direction: column; gap: 0.6rem; box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+}
+.drawer[hidden] { display: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.session-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.session-item {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 0.15rem;
+  overflow-wrap: anywhere; padding: 0.5rem 0.6rem;
+}
+.session-item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.session-meta { color: var(--muted); font-size: 0.8rem; }
+
+/* Wide screens: the list is a column beside the chat, and the Sessions button is not needed. */
+@media (min-width: 900px) {
+  .drawer { position: static; width: 280px; box-shadow: none; height: auto; min-height: 100%; flex: none; }
+  .drawer[hidden] { display: flex; }
+  #sessions-toggle { display: none; }
+  .shell > .layout { flex: 1; min-width: 0; }
+}
+
+.settings {
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 1rem;
+}
+.settings[open] { display: flex; flex-direction: column; gap: 0.6rem; }
+.settings::backdrop { background: rgba(0, 0, 0, 0.45); }
+.settings-form { display: flex; flex-direction: column; gap: 0.6rem; overflow: auto; }
+.settings-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+.settings-form input, .settings-form select {
+  font: inherit; padding: 0.4rem 0.5rem; border-radius: 6px; color: var(--text);
+  background: var(--code-bg); border: 1px solid var(--border);
+}
+body.busy .lockable { cursor: default; }

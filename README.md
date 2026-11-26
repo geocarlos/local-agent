@@ -140,6 +140,17 @@ uv run local-agent serve --web --port 8765     # a fixed port
 - **Extensions and webviews.** Their origins (`vscode-webview://`, `chrome-extension://`) are refused. Such a client sends the token as `Authorization: Bearer` and no `Origin`.
 - **Build note (conda Python).** An exe built on a conda Python needs `ffi-8.dll` (the `_ctypes` library) next to it, in `_internal`. Without it `serve --web` fails at start-up with a missing DLL, because click (a dependency of uvicorn) imports `ctypes`. The release build (uv-managed Python) includes it; `packaging\smoke-exe.ps1` checks that `serve --web` starts.
 
+### Web UI: models, settings and saved chats
+
+The page in the browser also has:
+
+- **Model picker** (header). The choices are the models Ollama has (`ollama list`). Choosing one switches the model of the current chat only; the next message uses it. If the model has no `tools` capability, the page shows a warning, as the terminal does. If Ollama is down, the picker holds the current model and says why.
+- **Sessions** (a column on a wide screen; the Sessions button on a phone). Each chat is saved after its first message, so it is listed with its first message as the title. Choosing one reloads its history on the screen, and the next message continues it. "New chat" starts an empty one in the same folder. "Load more" shows older chats, 50 at a time.
+- **Settings** (Settings button). The editor writes the per-user `config.toml` (or the `--config` file the server was started with). It edits `model` (the default for new chats), `host`, `num_ctx`, `max_tool_rounds`, `max_output_chars`, `command_timeout_s`, `network_timeout_s` and `tool_profile`. Comments and other keys in the file are kept. **The saved settings take effect when local-agent starts again.** The model picker changes the current chat only.
+- Not in the settings editor, on purpose: `network_enabled` (it turns on web_fetch), `workspace`, `plugin_dir`, `plugins_enabled`, `disabled_plugins`, `mcp_servers` and `test_command` (they run code or start programs). Edit those by hand in `config.toml`.
+
+**Where chats are saved.** One JSON file per chat in `%APPDATA%\local-agent\sessions\` (the per-user data folder; nothing is written into the install folder). The file holds the folder, the model, the title, the times and the messages the model sees (not the reasoning text). Writes are atomic. A file that cannot be read is skipped with a warning, so the rest of the list still shows. At most 200 chats are kept (the least recently used are deleted, with a warning), and a chat over 5 MiB is not saved. The environment variable `LOCAL_AGENT_DATA_DIR` changes the data folder. A chat whose folder no longer exists is listed but cannot be opened, with a message that says why. The CLI (`local-agent chat`) does not save chats. The protocol is in [docs/protocol.md](docs/protocol.md#saved-sessions).
+
 ## Configuration
 
 Settings come from four places, highest priority first:
@@ -341,7 +352,10 @@ src/local_agent/
   frontends/server.py  # ACP over JSON-RPC lines (StdioServer: sessions, prompt turns on a worker thread, permission requests); serve --stdio; the start-up shared with --web
   frontends/web.py     # serve --web: FastAPI and uvicorn on 127.0.0.1; a WebSocket per connection running a StdioServer; token and Origin checks
   frontends/webassets.py # the web UI's static files: the folder, the path rules, the Content-Security-Policy
-  web/                 # the web UI: index.html, style.css and js/ (transport.js, acp.js, chat.js, main.js); no build step
+  sessions.py          # saved chats: one JSON file each in the per-user data folder (atomic writes, limits, corrupt-file handling)
+  config_write.py      # the settings editor's allowlist and its write to config.toml (tomlkit: comments and unknown keys kept)
+  atomic.py            # atomic file writes (temp file, flush, os.replace) used by sessions and the settings editor
+  web/                 # the web UI: index.html, style.css and js/ (transport.js, acp.js, chat.js, panels.js, main.js); no build step
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage
