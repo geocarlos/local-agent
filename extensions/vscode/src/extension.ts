@@ -129,6 +129,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
         post.send({ type: "message", text });
       },
       onStderr: (text) => output.append(text),
+      onNotFound: (program) => notFoundMessage(program),
       onExit: (reason) => {
         post.send({ type: "closed", reason });
         output.appendLine(reason);
@@ -222,6 +223,22 @@ function pageHtml(context: vscode.ExtensionContext, webview: vscode.Webview, bun
     cspSource: webview.cspSource,
     assetUri: (file) => webview.asWebviewUri(vscode.Uri.joinPath(bundle, ...file.split("/"))).toString(),
   });
+}
+
+// The command's program is not on PATH (or not an .exe there). The message names the setting, and the button opens it.
+function notFoundMessage(program: string): void {
+  const open = "Open Settings";
+  void vscode.window
+    .showErrorMessage(
+      `Wildcat Code Agent cannot find "${program}". The command is set by the wildcatCodeAgent.command setting. ` +
+        "Install the app, or set the full path to wildcat-code-agent.exe there.",
+      open,
+    )
+    .then((choice) => {
+      if (choice === open) {
+        void vscode.commands.executeCommand("workbench.action.openSettings", "wildcatCodeAgent.command");
+      }
+    });
 }
 
 function errorText(error: unknown): string {

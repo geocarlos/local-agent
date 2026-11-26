@@ -65,6 +65,7 @@ One install serves every account on the machine. What is per account and what is
 - **MCP server logs:** per account, in that account's `%TEMP%` (a temp file per server, from `tempfile`), not under `%APPDATA%\wildcat-code-agent`.
 - **Workspace:** whatever folder the account runs in (`--cwd`, or the current folder). The tools can only touch files inside it, unless you approve more.
 - **Ollama:** the server is one process per port, not per account (see below).
+- **VS Code extension:** installed once in each account (`code --install-extension`, see [VS Code extension](#vs-code-extension)). The program it starts is the shared one.
 
 ### Ollama and several accounts
 
@@ -174,29 +175,67 @@ uv run wildcat-code-agent gui --cwd C:\src\my-project
 
 Status: tested on Windows 11 with Python 3.14 (pywebview 6.2.1, pythonnet 3.2.1); the frozen build was run on the same machine, and the installer compiles (it was not installed here). Only Windows is supported for the window; on other systems `wildcat-code-agent serve --web` and a browser do the same job.
 
-### VS Code extension (development)
+### VS Code extension
 
-The extension in `extensions/vscode/` opens a chat panel in VS Code. The panel is the same web UI (the bundle in `src/wildcat_code_agent/web/`), and it talks to `wildcat-code-agent serve --stdio` through the extension host instead of a WebSocket. Approvals work the same way: a write shows the diff and waits for your answer.
+The extension opens a chat panel in VS Code. The panel is the same web UI (the bundle in `src/wildcat_code_agent/web/`), and it talks to `wildcat-code-agent serve --stdio` through the extension host instead of a WebSocket. Approvals work the same way: a write shows the diff and waits for your answer. The extension does not contain the agent: it starts the app that is installed on the computer.
 
-Build and run it from the repo (Node 26 and npm, and `uv`):
+#### Install the extension (Windows, each account)
 
-```powershell
-cd extensions\vscode
-npm ci                    # once: installs the TypeScript and VS Code type packages
-npm run compile           # copies the web bundle to webview\ and compiles src\ to out\
-npm test                  # the extension's own tests (no VS Code needed)
-npm run test:e2e          # starts VS Code with the extension and checks the panel (set VSCODE_PATH to Code.exe)
-```
+Needs the app installed first ([Install (Windows)](#install-windows)), and VS Code 1.146 or newer. The extension is the file `wildcat-code-agent-vscode-<version>.vsix`: take it from the GitHub release, or build it (see [Building the VS Code extension](#building-the-vs-code-extension)).
 
-To try the panel, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **wildcat-code-agent: Open chat** from the Command Palette.
+1. **Install the app** for all users, as above. Then **close VS Code and open it again**. A program keeps the PATH it started with, so a VS Code that was already open before the install cannot find `wildcat-code-agent` until it restarts.
+2. **Install the extension in each Windows account** that will use it. Extensions belong to one account (they go in that account's `%USERPROFILE%\.vscode\extensions`), so an account that has never installed it needs this step, even though the app is shared. Sign in to the account, then run:
 
-- **Which agent runs:** the setting `wildcatCodeAgent.command` (an array; default `["wildcat-code-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. The command is spawned without a shell (`shell: false`), so the first item must be an `.exe` on PATH or a full path; a `.cmd` or `.bat` shim will not start. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\wildcat-code-agent", "wildcat-code-agent"]`. Reload the window after a change.
+   ```powershell
+   code --install-extension wildcat-code-agent-vscode-0.1.0.vsix
+   ```
+
+   `code` is VS Code's command line. The VS Code installer puts it on PATH when its "Add to PATH" option is ticked. If `code` is not found, run `code.cmd` by its full path: `%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd` for a per-user VS Code install, or `C:\Program Files\Microsoft VS Code\bin\code.cmd` for an all-users one. Or open the .vsix in VS Code and choose **Install**.
+3. **Open a folder** in VS Code, then run **Wildcat Code Agent: Open chat** from the Command Palette (Ctrl+Shift+P). The panel works in the first folder of the workspace.
+
+If VS Code says it cannot find `wildcat-code-agent`, the message has an **Open Settings** button that opens `wildcatCodeAgent.command`. The usual causes: the app is not installed; VS Code was not restarted after the install; or the setting points at a program that is not there.
+
+#### Update, uninstall and the path override
+
+- **Update:** in each account, run `code --install-extension` with the newer `.vsix`. VS Code replaces the old version. Reload the window if the panel was open.
+- **Uninstall the extension:** in each account, run `code --uninstall-extension wildcat-code-agent.wildcat-code-agent-vscode`, or remove it from the Extensions view. Uninstalling the app does not remove the extension, and the extension does not remove the app.
+- **Use another copy of the app:** the setting `wildcatCodeAgent.command` is an array. The default `["wildcat-code-agent"]` is found on PATH. To use the app from its install folder instead, set the full path in that account's user settings (**Preferences: Open User Settings (JSON)**). The default install folder is `C:\Program Files\wildcat-code-agent` (the installer's `{autopf}\wildcat-code-agent`), so the program is `C:\Program Files\wildcat-code-agent\wildcat-code-agent.exe`. In JSON, each backslash is written twice:
+
+  ```json
+  "wildcatCodeAgent.command": ["C:\\Program Files\\wildcat-code-agent\\wildcat-code-agent.exe"]
+  ```
+
+  Reload the window after a change. Each account has its own settings, so set it in each account that needs it.
+
+#### Notes on the command
+
+- The command is started without a shell (`shell: false`). Windows finds `wildcat-code-agent` on PATH as `wildcat-code-agent.exe`, but not a `.cmd` or `.bat` file, so the first item must be an `.exe` on PATH or a full path.
+- Every account that runs the extension runs its own agent process, from the same program. Config and plugins are per account (see [Multiple Windows accounts](#multiple-windows-accounts)).
+
+#### Use and features
+
+- **Which agent runs:** the setting above. The extension appends `serve --stdio --cwd <the folder>`.
 - **Folder:** the panel works in the first workspace folder. With no folder open, it says so and does not start the agent.
 - **Logs:** the output channel **wildcat-code-agent** shows the command line and the agent's stderr.
 - **Editor tools (T20):** in the panel, the agent's file and command tools run in the editor. `read_file` returns the text of an open file as it is in the editor, unsaved changes included. `write_file` and `edit_file` show the diff in the approval dialog, then change the open file as an edit, so **Ctrl+Z** (the editor's undo) reverts it while the file is open. A file the agent changes is saved when it had no unsaved changes of yours; if it had, the change stays unsaved and the agent is told to ask you to save. Undo after a save brings back the text in the editor, and the disk keeps the agent's text until you save. `run_command` and `run_tests` run in a VS Code terminal named **wildcat-code-agent**, and the output (stdout and stderr together) goes back to the agent. The terminal is a pseudoterminal, not a shell: it has no input, no colours and no shell profile. A browser or CLI session keeps the agent's own tools. Details: `docs/protocol.md`, "Client methods".
 - **Editor context (T21):** select text and run **Wildcat Code Agent: Add Selection to Chat** (Ctrl+Alt+L, or the editor's right-click menu). The selection appears above the prompt as a chip with its file and lines; **×** removes it. The active editor's file is attached by default, as an **Open file** checkbox that you can untick. Type `@` in the prompt to search workspace files, then pick one with Enter or Tab. The agent reads these files through the editor, so unsaved changes are included, and it gets the editor's errors and warnings for the attached files. A file outside the workspace is not read from an `@` pick or from the open file; the agent says so and asks you if it needs the file (through `read_file`, with your approval). The browser and the CLI have no editor, so there the `@` search and the attachments are not offered. Details: `docs/protocol.md`, "Prompt content".
-- **Not yet:** packaging (`vsce package`, a `.vsix` that uses the PATH command) is T22. Saved chats and settings work through the same server.
-- **Editor context (T21) is done:** the selection, the open file, `@file` and the editor's diagnostics are in the VS Code panel (see above). The context is sent for the turn it is attached to; the saved chat keeps only a marker listing the attachments. Limits and the rules for files outside the workspace are in `docs/protocol.md`, "Prompt content".
+
+#### Building the VS Code extension
+
+Needs Node 26 and npm. From `extensions\vscode`:
+
+```powershell
+cd extensions\vscode
+npm ci                    # once: installs the TypeScript, VS Code type and vsce packages
+npm run compile           # copies the web bundle to webview\ and compiles src\ to out\
+npm test                  # the extension's own tests (no VS Code needed)
+npm run test:e2e          # starts VS Code with the extension and checks the panel (set VSCODE_PATH to Code.exe)
+npm run package           # compiles, then writes wildcat-code-agent-vscode-<version>.vsix in extensions\vscode
+```
+
+`npm run package` runs `vsce` (`@vscode/vsce`, pinned in `package.json`). The .vsix carries `out\src`, `webview\`, `media\`, `package.json` and the README. The sources, tests, source maps and `node_modules` are left out (`extensions/vscode/.vscodeignore`). The version is the one in `extensions/vscode/package.json`. `vsce` warns that there is no LICENSE file: the extension's license is not chosen yet.
+
+To try the panel from the repo, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **wildcat-code-agent: Open chat**. To run the agent from the repo instead, set `wildcatCodeAgent.command` in that window, for example `["uv", "run", "--project", "C:\\src\\wildcat-code-agent", "wildcat-code-agent"]`. Reload the window after a change.
 
 ## Configuration
 
@@ -403,7 +442,7 @@ src/wildcat_code_agent/
   config_write.py      # the settings editor's allowlist and its write to config.toml (tomlkit: comments and the layout are kept)
   atomic.py            # atomic file writes (temp file, flush, os.replace) used by sessions and the settings editor
   web/                 # the web UI: index.html, style.css and js/ (transport.js, acp.js, chat.js, panels.js, main.js); no build step
-  extensions/vscode/   # the VS Code extension (T19, T20): the panel, the stdio relay, the editor tools and the tests; see the VS Code section
+  extensions/vscode/   # the VS Code extension (T19 to T22): the panel, the stdio relay, the editor tools, the .vsix packaging and the tests; see the VS Code section
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage
@@ -567,17 +606,18 @@ A release is a version tag. `.github/workflows/release.yml` runs on `windows-lat
    The tag must equal the `pyproject.toml` version exactly (`v0.2.0` for `0.2.0`). If it does not, the build stops at the "Read the version and check the tag" step and nothing is published.
 3. The workflow runs the tests, builds `dist\wildcat-code-agent\`, runs the frozen-exe tests and `packaging\smoke-exe.ps1`, builds the installer, and then creates the release.
 
-The release has three files:
+The release has four files:
 
 - `wildcat-code-agent-<version>-setup.exe`: the machine-wide installer (see "Building the installer").
 - `wildcat-code-agent-<version>-win-x64.zip`: the app folder, unzipped to `wildcat-code-agent-<version>-win-x64\` with `wildcat-code-agent.exe` and `_internal\`. Nothing is installed; run the exe from any folder.
-- `SHA256SUMS.txt`: the SHA-256 of both files, in `sha256sum` format. To check a download in Git Bash, run `sha256sum -c SHA256SUMS.txt` in the folder that holds the files. In PowerShell, compare `Get-FileHash <file> -Algorithm SHA256` with the line for that file.
+- `wildcat-code-agent-vscode-<version>.vsix`: the VS Code extension, built by `npm run package` in `extensionsscode` (the version is the extension's, in its `package.json`). Install it in each account (see "VS Code extension").
+- `SHA256SUMS.txt`: the SHA-256 of all three files, in `sha256sum` format. To check a download in Git Bash, run `sha256sum -c SHA256SUMS.txt` in the folder that holds the files. In PowerShell, compare `Get-FileHash <file> -Algorithm SHA256` with the line for that file.
 
 A tag with a suffix, such as `v0.2.0-rc1`, becomes a pre-release. Its `pyproject.toml` version must be the same suffixed string.
 
 **Dry runs (no release, no tag):**
 
-- Open a pull request that changes `packaging/**`, `.github/workflows/release.yml`, `pyproject.toml` or `uv.lock`. The workflow builds, tests and uploads the files as the run's artifact `wildcat-code-agent-release-<version>` (kept 14 days). The tag check is skipped.
+- Open a pull request that changes `packaging/**`, `.github/workflows/release.yml`, `pyproject.toml`, `uv.lock` or `extensions/vscode/**`. The workflow builds, tests and uploads the files as the run's artifact `wildcat-code-agent-release-<version>` (kept 14 days). The tag check is skipped.
 - Or run the workflow by hand: Actions, Release, Run workflow. It does the same and never publishes, even if the branch selected is a tag.
 
 **Build details:**

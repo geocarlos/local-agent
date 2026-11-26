@@ -6,6 +6,11 @@
   "private": true,
   "license": "UNLICENSED",
   "publisher": "wildcat-code-agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/geocarlos/wildcat-code-agent.git",
+    "directory": "extensions/vscode"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.146.0"
@@ -65,12 +70,14 @@
     "build": "npm run compile",
     "pretest": "npm run compile",
     "test": "node --test \"out/test/*.test.js\" \"test/*.test.mjs\"",
-    "test:e2e": "npm run compile && node out/test-e2e/runTest.js"
+    "test:e2e": "npm run compile && node out/test-e2e/runTest.js",
+    "package": "npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
     "@types/vscode": "~1.146.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "4.1.1",
     "typescript": "~5.9.3"
   }
 }

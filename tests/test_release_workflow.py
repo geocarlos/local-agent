@@ -48,7 +48,13 @@ def test_runs_on_version_tag_push_only(triggers):
 
 def test_pull_request_is_limited_to_release_inputs(triggers):
     paths = triggers["pull_request"]["paths"]
-    assert set(paths) == {"packaging/**", ".github/workflows/release.yml", "pyproject.toml", "uv.lock"}
+    assert set(paths) == {
+        "packaging/**",
+        ".github/workflows/release.yml",
+        "pyproject.toml",
+        "uv.lock",
+        "extensions/vscode/**",
+    }
 
 
 def test_manual_dry_run_is_available(triggers):
@@ -118,6 +124,23 @@ def test_installer_and_zip_are_built_and_checksummed(wf):
     assert "wildcat-code-agent-$Version-win-x64.zip" in text
     assert "wildcat-code-agent-$Version-setup.exe" in text
     assert "SHA256SUMS.txt" in text
+
+
+def test_the_vsix_is_built_with_npm_package_and_checksummed(wf):
+    # T22: the VS Code extension is packaged with `npm run package` (compile, then vsce) and listed with the others.
+    build = wf["jobs"]["build"]
+    text = _run_text(build)
+    assert "npm run package" in text
+    assert "npm ci" in text
+    assert r"extensions\vscode" in text
+    assert "$Extension" in text
+    assert "foreach ($File in @($Setup, $Zip, $Extension))" in text
+    setup_node = [step for step in _steps(build) if step.get("uses", "").startswith("actions/setup-node@")]
+    assert setup_node and setup_node[0]["with"]["node-version"] == 26
+
+
+def test_the_extension_folder_changes_start_a_dry_run(triggers):
+    assert "extensions/vscode/**" in triggers["pull_request"]["paths"]
 
 
 def test_inno_setup_is_pinned_and_skipped_when_present(wf):

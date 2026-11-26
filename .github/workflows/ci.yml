@@ -31,7 +31,7 @@ jobs:
           WILDCAT_CODE_AGENT_REQUIRE_WINDOW: "1"
         run: uv run --locked pytest tests/test_gui_window.py -v
 
-  # The VS Code extension (T19): TypeScript compile and the node tests. The tests do not start VS Code.
+  # The VS Code extension (T19): TypeScript compile and the node tests (no VS Code), then the .vsix (T22).
   extension:
     runs-on: ubuntu-latest
     defaults:
@@ -52,3 +52,15 @@ jobs:
 
       - name: Compile and test
         run: npm test
+
+      # The installable .vsix (T22): compiles, copies the web bundle and runs vsce. Uploaded for a manual install test.
+      - name: Package the .vsix
+        run: npm run package
+
+      - name: Upload the .vsix as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wildcat-code-agent-vscode-vsix
+          path: extensions/vscode/*.vsix
+          if-no-files-found: error
+          retention-days: 14

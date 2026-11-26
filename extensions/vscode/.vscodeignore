@@ -1,0 +1,23 @@
+# What the .vsix carries: out/src (the compiled extension), webview/ (the chat page), media/, package.json and the
+# README. Everything else is left out. vsce always leaves out .vscodeignore, *.vsix and the .git folder.
+
+# Sources and tests (the compiled out/src is what runs).
+src/**
+test/**
+test-e2e/**
+out/test/**
+out/test-e2e/**
+scripts/**
+tsconfig.json
+.vscode-test/**
+
+# Dependencies: the extension has none at run time (package.json "dependencies"), so node_modules is never shipped.
+node_modules/**
+package-lock.json
+
+# Source maps point at src/*.ts, which is not shipped, so they are left out too.
+**/*.map
+
+# Editor and git files.
+.gitignore
+.vscode/**
