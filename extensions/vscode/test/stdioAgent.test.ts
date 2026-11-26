@@ -99,3 +99,38 @@ test("a program that does not exist reports that it cannot start", async () => {
   assert.match(exits[0], /^Cannot start the agent: /);
   assert.equal(agent.running, false);
 });
+
+test("a send while the agent dies does not raise an unhandled error (EPIPE)", async () => {
+  // The child exits after 100 ms. Sends go out every 2 ms until the exit event; the writes that land after the
+  // child's read end closes fail with EPIPE on stdin. Without a stdin 'error' listener that is an uncaught error.
+  const { agent, exits } = echoAgent();
+  const uncaught: Error[] = [];
+  const onUncaught = (error: Error) => uncaught.push(error);
+  process.on("uncaughtException", onUncaught);
+  try {
+    agent.start(process.execPath, ["-e", "setTimeout(() => process.exit(0), 100)"], process.cwd());
+    const timer = setInterval(() => {
+      if (agent.running) {
+        agent.send('{"jsonrpc":"2.0","method":"late"}');
+      }
+    }, 2);
+    await waitFor(() => exits.length === 1, "the agent to exit");
+    clearInterval(timer);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(uncaught, []);
+    assert.throws(() => agent.send("{}"), /not running/);
+  } finally {
+    process.off("uncaughtException", onUncaught);
+    agent.stop();
+  }
+});
+
+test("after detach, a dead agent reports nothing", async () => {
+  const { agent, messages, exits } = echoAgent();
+  agent.start(process.execPath, ["-e", ECHO], process.cwd());
+  agent.detach();
+  agent.send("quit");
+  await waitFor(() => !agent.running, "the agent to exit");
+  assert.deepEqual(messages, []);
+  assert.deepEqual(exits, []);
+});

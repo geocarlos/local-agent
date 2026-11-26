@@ -10,7 +10,9 @@ export type WebviewToHost =
 export type HostToWebview =
   | { type: "init"; cwd: string }
   | { type: "message"; text: string }
-  | { type: "closed"; reason: string };
+  | { type: "closed"; reason: string }
+  // A message could not be sent, but the agent is still running: the link stays open.
+  | { type: "error"; reason: string };
 
 // Returns the message if `data` has a known shape, else null (anything else from the webview is ignored).
 export function parseWebviewMessage(data: unknown): WebviewToHost | null {

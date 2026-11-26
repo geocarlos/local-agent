@@ -13,7 +13,10 @@ export class LinkError extends Error {}
 // The VS Code webview link (T19). The extension host starts `local-agent serve --stdio` and relays each JSON line:
 //   webview -> host: {type: "ready"} once, then {type: "send", text} for each message
 //   host -> webview: {type: "init", cwd} once the agent runs, {type: "message", text} for each line from it,
-//                    {type: "closed", reason} when the agent is gone (before init it is a failed connect)
+//                    {type: "closed", reason} when the agent is gone (before init it is a failed connect),
+//                    {type: "error", reason} when one message could not be sent but the agent is still there
+// An error goes to link.onError(text) if the client set it (the chat shows it), else to console.error. The link
+// stays open.
 // Resolves with {link, cwd} on init. `api` is acquireVsCodeApi(); `win` is the window (its message events).
 export function connectHostLink(api, win = window) {
   return new Promise((resolve, reject) => {
@@ -22,6 +25,7 @@ export function connectHostLink(api, win = window) {
     const link = {
       onMessage: null,
       onClose: null,
+      onError: null,
       send(text) {
         if (closed) {
           throw new LinkError("The connection to local-agent is closed.");
@@ -53,6 +57,13 @@ export function connectHostLink(api, win = window) {
         link.onMessage(data.text);
       } else if (data.type === "closed") {
         end(typeof data.reason === "string" ? data.reason : "The connection was closed.");
+      } else if (data.type === "error" && !closed) {
+        const text = typeof data.reason === "string" ? data.reason : "A message could not be sent to local-agent.";
+        if (link.onError) {
+          link.onError(text);
+        } else {
+          console.error(text);
+        }
       }
     };
     win.addEventListener("message", onHostMessage);

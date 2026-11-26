@@ -88,6 +88,8 @@ class App {
   // `open` returns {link, cwd}: openBrowserLink (browser, pywebview) or connectHostLink (VS Code webview).
   async connect(open) {
     const { link, cwd } = await open();
+    // A host-side send error (the link stays open) is shown in the chat, the same way a failed turn is.
+    link.onError = (text) => this.view.addError(text);
     this.client = new AcpClient(link);
     this.client.onUpdate = (update) => this.view.update(update);
     this.client.onPermission = (params) => this.view.askPermission(params);

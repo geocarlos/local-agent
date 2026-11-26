@@ -24,13 +24,16 @@ export function serveArgv(command: string[], folder: string): { program: string;
 
 export const KILL_AFTER_MS = 3000;
 
+// Handlers that drop everything: used once the owner has gone (see AgentProcess.detach).
+const SILENT: AgentHandlers = { onMessage() {}, onStderr() {}, onExit() {} };
+
 export class AgentProcess {
   private child: ChildProcess | null = null;
   private exited = false;
   private killTimer: NodeJS.Timeout | null = null;
 
   constructor(
-    private readonly handlers: AgentHandlers,
+    private handlers: AgentHandlers,
     private readonly spawn: SpawnFn = defaultSpawn,
   ) {}
 
@@ -59,6 +62,9 @@ export class AgentProcess {
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => this.handlers.onStderr(chunk));
     child.on("error", (error) => this.finish(`Cannot start the agent: ${error.message}`));
+    // A write after the agent has died raises EPIPE as an 'error' event on stdin. Without a listener that is an
+    // uncaught exception; the 'exit' event below already reports the failure, so the error is only absorbed here.
+    child.stdin?.on("error", () => {});
     child.on("exit", (code, signal) => {
       this.finish(code !== null ? `The agent stopped (exit code ${code}).` : `The agent stopped (signal ${signal}).`);
     });
@@ -70,6 +76,11 @@ export class AgentProcess {
       throw new Error("The agent is not running.");
     }
     this.child.stdin.write(encodeLine(text));
+  }
+
+  // Stops reporting: no handler is called after this (the owner has gone). It does not stop the agent; call stop().
+  detach(): void {
+    this.handlers = SILENT;
   }
 
   // Ends the input (the server finishes its turns and exits on EOF); kills it if it is still there after a while.

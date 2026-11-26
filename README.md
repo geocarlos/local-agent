@@ -188,7 +188,7 @@ npm run test:e2e          # starts VS Code with the extension and checks the pan
 
 To try the panel, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **local-agent: Open chat** from the Command Palette.
 
-- **Which agent runs:** the setting `localAgent.command` (an array; default `["local-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\local-agent", "local-agent"]`. Reload the window after a change.
+- **Which agent runs:** the setting `localAgent.command` (an array; default `["local-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. The command is spawned without a shell (`shell: false`), so the first item must be an `.exe` on PATH or a full path; a `.cmd` or `.bat` shim will not start. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\local-agent", "local-agent"]`. Reload the window after a change.
 - **Folder:** the panel works in the first workspace folder. With no folder open, it says so and does not start the agent.
 - **Logs:** the output channel **local-agent** shows the command line and the agent's stderr.
 - **Not yet:** packaging (`vsce package`, a `.vsix` that uses the PATH command) is T22; the editor tools and context are T20 and T21. Saved chats and settings work through the same server.

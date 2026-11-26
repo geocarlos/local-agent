@@ -79,3 +79,38 @@ test("a second init does not resolve twice, and unrelated events are ignored", a
   const { cwd } = await pending;
   assert.equal(cwd, "first");
 });
+
+test("a host error goes to onError and leaves the link open", async () => {
+  const win = fakeWindow();
+  const api = fakeApi();
+  const pending = connectHostLink(api, win);
+  win.deliver({ type: "init", cwd: "C:\work" });
+  const { link } = await pending;
+  const errors = [];
+  const closes = [];
+  link.onError = (text) => errors.push(text);
+  link.onClose = (reason) => closes.push(reason);
+  win.deliver({ type: "error", reason: "Could not send to the agent: A protocol message must be one line." });
+  assert.deepEqual(errors, ["Could not send to the agent: A protocol message must be one line."]);
+  assert.deepEqual(closes, []);
+  assert.equal(win.count, 1);
+  link.send('{"jsonrpc":"2.0","id":3,"method":"session/prompt"}');
+  assert.equal(api.posted.at(-1).type, "send");
+});
+
+test("a host error with no onError is logged with console.error, and the link stays open", async () => {
+  const win = fakeWindow();
+  const pending = connectHostLink(fakeApi(), win);
+  win.deliver({ type: "init", cwd: "C:\work" });
+  const { link } = await pending;
+  const logged = [];
+  const original = console.error;
+  console.error = (text) => logged.push(text);
+  try {
+    win.deliver({ type: "error", reason: "Could not send to the agent: boom" });
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(logged, ["Could not send to the agent: boom"]);
+  assert.doesNotThrow(() => link.send("{}"));
+});

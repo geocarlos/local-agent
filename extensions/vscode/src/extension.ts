@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { parseWebviewMessage, HostToWebview } from "./messages";
+import { GuardedSender } from "./guardedSender";
 import { AgentProcess, serveArgv } from "./stdioAgent";
 import { nonceFrom, renderWebviewPage } from "./webviewHtml";
 
@@ -47,9 +48,10 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
   panel = current;
   current.webview.html = pageHtml(context, current.webview, bundle);
 
-  const post = (message: HostToWebview) => {
+  // Every message to the webview goes through here; after dispose it is dropped (see guardedSender.ts).
+  const post = new GuardedSender<HostToWebview>((message) => {
     void current.webview.postMessage(message);
-  };
+  });
   const startAgent = () => {
     if (agent?.running) {
       return;
@@ -57,10 +59,10 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
     stopAgent();
     const command = vscode.workspace.getConfiguration("localAgent").get<string[]>("command", ["local-agent"]);
     const relay = new AgentProcess({
-      onMessage: (text) => post({ type: "message", text }),
+      onMessage: (text) => post.send({ type: "message", text }),
       onStderr: (text) => output.append(text),
       onExit: (reason) => {
-        post({ type: "closed", reason });
+        post.send({ type: "closed", reason });
         output.appendLine(reason);
       },
     });
@@ -70,7 +72,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
       output.appendLine(`Starting: ${program} ${args.join(" ")}`);
       relay.start(program, args, folder);
     } catch (error) {
-      post({ type: "closed", reason: errorText(error) });
+      post.send({ type: "closed", reason: errorText(error) });
     }
   };
 
@@ -81,19 +83,22 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
     }
     if (message.type === "ready") {
       startAgent();
-      post({ type: "init", cwd: folder });
+      post.send({ type: "init", cwd: folder });
     } else if (message.type === "send") {
+      if (!agent?.running) {
+        post.send({ type: "closed", reason: "The agent is not running." });
+        return;
+      }
       try {
-        if (!agent?.running) {
-          throw new Error("The agent is not running.");
-        }
         agent.send(message.text);
       } catch (error) {
-        post({ type: "closed", reason: errorText(error) });
+        // The agent is still running, so the link stays up; the webview shows the error and the user can retry.
+        post.send({ type: "error", reason: `Could not send to the agent: ${errorText(error)}` });
       }
     }
   });
   current.onDidDispose(() => {
+    post.dispose();
     stopAgent();
     if (panel === current) {
       panel = undefined;
@@ -102,6 +107,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
 }
 
 function stopAgent(): void {
+  agent?.detach();
   agent?.stop();
   agent = undefined;
 }

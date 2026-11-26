@@ -7,10 +7,17 @@
 The agent is a real `local-agent serve --stdio` process with the scripted model (tests/fake_ollama_http.py).
 The TypeScript side of the host (the spawn and the framing) is tested by `npm test` in extensions/vscode.
 
+The page is served the way the extension serves it (extensions/vscode/src/webviewHtml.ts): the same
+Content-Security-Policy meta, a per-load nonce on every script, and root-relative links turned into the webview's
+origin. So a script or style the policy refuses shows up as a console error, and the test checks for it.
+
 The tests skip when Edge or Playwright is missing, under the same rules as tests/test_web_browser.py.
 """
 
+import functools
 import queue
+import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -26,6 +33,7 @@ playwright_api = pytest.importorskip("playwright.sync_api")
 
 BUNDLE = Path(__file__).resolve().parents[1] / "src" / "local_agent" / "web"
 PAGE_URL = "https://webview.test/index.html"
+CSP_SOURCE = "https://webview.test"  # stands in for webview.cspSource
 SHIM = """
 window.acquireVsCodeApi = () => ({ postMessage: (message) => window.hostPost(message) });
 """
@@ -108,24 +116,51 @@ class Host:
         raise AssertionError(f"timed out waiting for {what}")
 
 
+def webview_csp(nonce):
+    """The policy webviewHtml.ts builds (contentSecurityPolicy), with the test's origin as the webview source."""
+    return "; ".join([
+        "default-src 'none'",
+        f"img-src {CSP_SOURCE} data:",
+        f"style-src {CSP_SOURCE}",
+        f"font-src {CSP_SOURCE}",
+        f"script-src 'nonce-{nonce}' {CSP_SOURCE}",
+        "connect-src 'none'",
+    ])
+
+
+def render_page(index_html, nonce):
+    """The page renderWebviewPage makes: links to the origin, a nonce on each script, the CSP meta after charset."""
+    with_uris = re.sub(r'(href|src)="/([^"]*)"', lambda m: f'{m.group(1)}="{CSP_SOURCE}/{m.group(2)}"', index_html)
+    with_nonces = re.sub(r"<script(\s)", lambda m: f'<script nonce="{nonce}"{m.group(1)}', with_uris)
+    meta = f'<meta http-equiv="Content-Security-Policy" content="{webview_csp(nonce)}">'
+    return re.sub(r'(<meta charset="utf-8">)', lambda m: f"{m.group(1)}\n  {meta}", with_nonces, count=1, flags=re.I)
+
+
 def open_bundle(edge_browser, agent):
     page = edge_browser.new_page()
     errors: list[str] = []
     page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
-    page.route("https://webview.test/**", lambda route: serve_bundle(route))
+    nonce = secrets.token_hex(16)  # per load, as the extension makes it
+    page.route("https://webview.test/**", functools.partial(serve_bundle, nonce=nonce))
     host = Host(page, agent["proc"], agent["workspace"])
     page.expose_function("hostPost", host.from_page)
     page.add_init_script(SHIM)
     page.goto(PAGE_URL)
     host.wait_until(lambda: page.locator("#status").inner_text() == "Connected", "the page to connect")
+    # The policy is in the page, so the CSP error check below is a real check: the page works under it.
+    assert page.locator('meta[http-equiv="Content-Security-Policy"]').count() == 1
     return page, host, errors
 
 
-def serve_bundle(route):
+def serve_bundle(route, nonce):
     name = route.request.url.split("webview.test/", 1)[1].split("?")[0] or "index.html"
     path = BUNDLE / name
     if not path.is_file() or ".." in name:
         route.fulfill(status=404, body="not found")
+        return
+    if name == "index.html":
+        html = render_page(path.read_text(encoding="utf-8"), nonce)
+        route.fulfill(status=200, body=html, content_type="text/html")
         return
     content_type = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
     route.fulfill(path=str(path), content_type=content_type.get(path.suffix, "application/octet-stream"))
