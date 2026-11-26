@@ -10,6 +10,8 @@ export interface AgentHandlers {
   onMessage(text: string): void;
   onStderr(text: string): void;
   onExit(reason: string): void;
+  // The program was not found on PATH (spawn ENOENT). Called before onExit, so the owner can point at the setting.
+  onNotFound?(program: string): void;
 }
 
 // The program and arguments for the server. `command` is the setting: the first item is the program, the rest
@@ -61,7 +63,12 @@ export class AgentProcess {
     });
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => this.handlers.onStderr(chunk));
-    child.on("error", (error) => this.finish(`Cannot start the agent: ${error.message}`));
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        this.handlers.onNotFound?.(program);
+      }
+      this.finish(`Cannot start the agent: ${error.message}`);
+    });
     // A write after the agent has died raises EPIPE as an 'error' event on stdin. Without a listener that is an
     // uncaught exception; the 'exit' event below already reports the failure, so the error is only absorbed here.
     child.stdin?.on("error", () => {});

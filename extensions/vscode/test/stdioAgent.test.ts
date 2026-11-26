@@ -100,6 +100,23 @@ test("a program that does not exist reports that it cannot start", async () => {
   assert.equal(agent.running, false);
 });
 
+test("a program that is not found calls onNotFound with its name, before the exit report", async () => {
+  const calls: string[] = [];
+  const agent = new AgentProcess(
+    {
+      onMessage: () => {},
+      onStderr: () => {},
+      onExit: (reason) => calls.push(`exit: ${reason}`),
+      onNotFound: (program) => calls.push(`not found: ${program}`),
+    },
+    (program, args, cwd) => spawn(program, args, { cwd, stdio: ["pipe", "pipe", "pipe"] }),
+  );
+  agent.start("definitely-not-a-real-wildcat-code-agent-program", ["serve"], process.cwd());
+  await waitFor(() => calls.length === 2, "the start error");
+  assert.deepEqual(calls.map((call) => call.split(":")[0]), ["not found", "exit"]);
+  assert.equal(calls[0], "not found: definitely-not-a-real-wildcat-code-agent-program");
+});
+
 test("a send while the agent dies does not raise an unhandled error (EPIPE)", async () => {
   // The child exits after 100 ms. Sends go out every 2 ms until the exit event; the writes that land after the
   // child's read end closes fail with EPIPE on stdin. Without a stdin 'error' listener that is an uncaught error.
