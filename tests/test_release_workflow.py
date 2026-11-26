@@ -68,10 +68,23 @@ def test_default_permission_is_read_only(wf):
     assert wf["permissions"] == {"contents": "read"}
 
 
-def test_only_the_publish_job_can_write_contents(wf):
+def test_no_job_writes_with_the_built_in_token(wf):
+    # The release is created with the owner's RELEASE_TOKEN, so the built-in token never needs write access (and a
+    # release made with it would show github-actions[bot] as its author).
     writers = [name for name, job in wf["jobs"].items()
                if job.get("permissions", {}).get("contents") == "write"]
-    assert writers == ["publish"]
+    assert writers == []
+
+
+def test_the_release_is_created_with_the_owners_token_and_stops_without_it(wf):
+    publish = wf["jobs"]["publish"]
+    steps = _steps(publish)
+    create = [step for step in steps if "gh release create" in step.get("run", "")]
+    assert create and create[0]["env"]["GH_TOKEN"] == "${{ secrets.RELEASE_TOKEN }}"
+    assert "github.token" not in _run_text(publish) and "GITHUB_TOKEN" not in str(publish)
+    guard = steps.index(next(step for step in steps if "RELEASE_TOKEN is not set" in step.get("run", "")))
+    assert guard < steps.index(create[0])  # it fails before anything is downloaded or published
+    assert guard == 0
 
 
 def test_publish_job_is_only_for_version_tag_pushes(wf):

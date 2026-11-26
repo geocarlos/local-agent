@@ -196,9 +196,20 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The release is created with the owner's own token (secret RELEASE_TOKEN), so the owner is its author. The
+    # built-in token would make github-actions[bot] the author, and no bot is shown as an author here.
     permissions:
-      contents: write
+      contents: read
     steps:
+      - name: Check that RELEASE_TOKEN is set
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::The repository secret RELEASE_TOKEN is not set. Add a fine-grained personal access token of the repository owner with Contents: Read and write on this repository (see README, Releasing). Nothing was published."
+            exit 1
+          fi
+
       - name: Download the release files
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -207,7 +218,8 @@ jobs:
 
       - name: Create the GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # The owner's token, not github.token: the release's author is the token's user.
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           # This job does not check out the repository, so gh must be told which one it is.
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
