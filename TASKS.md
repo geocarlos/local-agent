@@ -108,7 +108,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Standalone static app (built assets in `src/local_agent/web/`, reusable in VS Code): streaming chat, tool-call cards, approval dialog with diff view.
 - **Done when:** a chat with an approved edit works in a browser against the T15 server.
 
-### T17 Web frontend: models, settings, history: `in review`
+### ✅ T17 Web frontend: models, settings, history: `done`
 - Model picker (from Ollama), settings editor (writes the TOML config), saved session history per user.
 - **Done when:** sessions persist and reopen; settings round-trip.
 
