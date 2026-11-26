@@ -42,6 +42,17 @@ MCP_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,31}")  # no underscore
 PLUGIN_DIR_NAME = "tools"
 
 MIN_NUM_CTX = 512
+# Upper limits for the whole-number settings (T17). Every integer is also capped at 2**63 - 1.
+# num_ctx: 1 Mi tokens is far above any model's window in use; the output and time limits keep one tool
+# call or one reply from being unbounded.
+MAX_INT = 2**63 - 1
+MAX_VALUES = {
+    "num_ctx": 1_048_576,
+    "max_tool_rounds": 200,
+    "max_output_chars": 1_000_000,
+    "command_timeout_s": 3600,
+    "network_timeout_s": 3600,
+}
 
 
 class ConfigError(ValueError):
@@ -288,6 +299,9 @@ def _int_at_least(key: str, value: Any, minimum: int, source: str) -> int:
         raise ConfigError(f"{source} must be a whole number, got {value!r}")
     if value < minimum:
         raise ConfigError(f"{source} must be at least {minimum}, got {value}")
+    maximum = MAX_VALUES.get(key, MAX_INT)
+    if value > maximum:
+        raise ConfigError(f"{source} must be at most {maximum}, got {value}")
     return value
 
 

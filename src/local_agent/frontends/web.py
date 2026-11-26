@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any, TextIO
 
 import ollama
@@ -36,6 +37,7 @@ import uvicorn
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
+from local_agent import config, sessions
 from local_agent.config import Settings
 from local_agent.frontends import server as acp
 from local_agent.frontends import webassets
@@ -149,13 +151,15 @@ async def _send_frames(websocket: WebSocket, outbox: asyncio.Queue) -> None:
 
 
 async def _serve_connection(websocket: WebSocket, *, settings: Settings, client: Any,
-                            log: Callable[[str], None], threads: list[threading.Thread]) -> None:
+                            log: Callable[[str], None], threads: list[threading.Thread],
+                            store: sessions.SessionStore, config_file: Path) -> None:
     """Run one accepted WebSocket as one ACP server until the client disconnects."""
     loop = asyncio.get_running_loop()
     outbox: asyncio.Queue = asyncio.Queue()
     writer = _FrameWriter(loop, outbox)
     reader = _FrameReader()
-    agent = acp.StdioServer(settings, client=client, reader=reader, writer=writer, log=log)
+    agent = acp.StdioServer(settings, client=client, reader=reader, writer=writer, log=log, store=store,
+                            config_file=config_file)
     thread = threading.Thread(target=agent.serve, name=f"ws-connection-{len(threads)}", daemon=True)
     threads[:] = [t for t in threads if t.is_alive()] + [thread]
     thread.start()
@@ -177,7 +181,8 @@ async def _serve_connection(websocket: WebSocket, *, settings: Settings, client:
 
 def create_app(settings: Settings, *, token: str, port: int, client: Any,
                log: Callable[[str], None] = lambda line: print(line, file=sys.stderr, flush=True),
-               threads: list[threading.Thread] | None = None) -> FastAPI:
+               threads: list[threading.Thread] | None = None, store: sessions.SessionStore | None = None,
+               config_file: Path | None = None) -> FastAPI:
     """The FastAPI app: the web UI at `/` (static files from the web folder), `/info` (needs the token; gives
     the workspace folder the UI starts sessions in) and the ACP WebSocket at `/ws`.
 
@@ -186,6 +191,10 @@ def create_app(settings: Settings, *, token: str, port: int, client: Any,
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     connection_threads: list[threading.Thread] = [] if threads is None else threads
+    if store is None:
+        store = sessions.SessionStore(sessions.sessions_folder(), log=log)
+    if config_file is None:
+        config_file = config.config_path()
     headers = webassets.page_headers(port)
 
     @app.get("/info")
@@ -216,7 +225,8 @@ def create_app(settings: Settings, *, token: str, port: int, client: Any,
             await websocket.close(code=WS_POLICY_VIOLATION)
             return
         await websocket.accept()
-        await _serve_connection(websocket, settings=settings, client=client, log=log, threads=connection_threads)
+        await _serve_connection(websocket, settings=settings, client=client, log=log, threads=connection_threads,
+                                store=store, config_file=config_file)
 
     return app
 
@@ -237,7 +247,8 @@ def bind_loopback(port: int) -> socket.socket:
     return sock
 
 
-def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: TextIO | None = None) -> None:
+def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: TextIO | None = None,
+              store: sessions.SessionStore | None = None, config_file: Path | None = None) -> None:
     """Run the web server until it is stopped (Ctrl+C). The URL and the token are printed to stderr.
 
     Plugins and MCP servers start before the server accepts connections and close after the last
@@ -259,10 +270,13 @@ def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: 
     if client is None:
         client = ollama.Client(host=settings.host)
     threads: list[threading.Thread] = []
-    app = create_app(settings, token=token, port=bound_port, client=client, log=log, threads=threads)
-    config = uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES, access_log=False,
-                            log_level="warning", lifespan="off")
-    uv_server = uvicorn.Server(config)
+    if store is None:
+        store = sessions.SessionStore(sessions.sessions_folder(), log=log)
+    app = create_app(settings, token=token, port=bound_port, client=client, log=log, threads=threads,
+                     store=store, config_file=config_file)
+    uv_config = uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES, access_log=False,
+                               log_level="warning", lifespan="off")
+    uv_server = uvicorn.Server(uv_config)
     try:
         with contextlib.redirect_stdout(errors), acp.running_agent(settings, client=client, log=log):
             try:

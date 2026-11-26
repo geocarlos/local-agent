@@ -17,6 +17,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CAPABILITIES = ["completion", "tools"]
+INSTALLED = ["qwen3-vl:8b", "qwen2.5-coder:7b"]
 PLAIN_REPLY = ["Hello ", "from the ", "scripted model."]
 DONE_REPLY = ["The edit is done: ", "hello.txt now says ", "Hello there."]
 DENIED_REPLY = ["I did not edit ", "hello.txt, ", "because the edit was refused."]
@@ -60,9 +61,18 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(length) or b"{}")
 
+    def do_GET(self):  # noqa: N802 (the base class's name)
+        if self.path == "/api/tags":  # the model picker's list
+            self._json({"models": [{"name": name, "model": name} for name in INSTALLED]})
+        else:
+            self.send_error(404)
+
     def do_POST(self):  # noqa: N802 (the base class's name)
         if self.path == "/api/show":
-            self._body()
+            body = self._body()
+            if body.get("model") not in INSTALLED:
+                self._json({"error": "model not found"}, status=404)
+                return
             self._json({"capabilities": CAPABILITIES, "model_info": {}})
         elif self.path == "/api/chat":
             body = self._body()
@@ -76,9 +86,9 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def _json(self, obj: dict) -> None:
+    def _json(self, obj: dict, status: int = 200) -> None:
         data = json.dumps(obj).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

@@ -108,19 +108,31 @@ class FakeOllama:
         chunk_chars: int | None = None,
         capabilities: tuple[str, ...] | None = ("completion", "tools"),
         show_error: BaseException | None = None,
+        installed: tuple[str, ...] = ("qwen3-vl:8b", "qwen2.5-coder:7b"),
+        list_error: BaseException | None = None,
     ):
         self.responses = list(responses)
         self.repeat_last = repeat_last
         self.chunk_chars = chunk_chars
         self.capabilities = capabilities
         self.show_error = show_error
+        self.installed = installed
+        self.list_error = list_error
         self.calls: list[dict] = []
         self.show_calls: list[str] = []
+
+    def list(self):
+        """The installed models (the list the model picker shows). `list_error` is raised instead."""
+        if self.list_error is not None:
+            raise self.list_error
+        return ollama.ListResponse(models=[ollama.ListResponse.Model(model=name) for name in self.installed])
 
     def show(self, model):
         self.show_calls.append(model)
         if self.show_error is not None:
             raise self.show_error
+        if model not in self.installed:  # Ollama answers 404 for a model it does not have
+            raise ollama.ResponseError(f"model '{model}' not found", 404)
         capabilities = None if self.capabilities is None else list(self.capabilities)
         return ollama.ShowResponse(model="fake", model_info={}, capabilities=capabilities)
 

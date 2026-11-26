@@ -15,6 +15,15 @@ _real_entry_points = importlib.metadata.entry_points
 
 
 @pytest.fixture(autouse=True)
+def isolated_user_folders(tmp_path_factory, monkeypatch):
+    """Keep every test away from the real per-user folders (the per-user app folder): the config file and the
+    data folder (saved sessions) point at temp folders. Subprocesses inherit the environment variable."""
+    base = tmp_path_factory.mktemp("user-folders")
+    monkeypatch.setattr(config, "config_path", lambda: base / "config" / "config.toml")
+    monkeypatch.setenv("LOCAL_AGENT_DATA_DIR", str(base / "data"))
+
+
+@pytest.fixture(autouse=True)
 def isolated_plugins(tmp_path_factory, monkeypatch):
     """Keep every test away from the real user config folder and from installed plugins.
 

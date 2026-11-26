@@ -60,14 +60,15 @@ class _Outbox:
 class Wire:
     """A server on a thread, and the client end of its streams."""
 
-    def __init__(self, workspace: Path, responses: list, *, settings: Settings | None = None) -> None:
-        self.client = FakeOllama(responses)
+    def __init__(self, workspace: Path, responses: list, *, settings: Settings | None = None,
+                 client: FakeOllama | None = None, **server_options) -> None:
+        self.client = client if client is not None else FakeOllama(responses)
         self.inbox = _Inbox()
         self.outbox = _Outbox()
         self.log: list[str] = []
         self.settings = settings or Settings(workspace=workspace)
         self.server = StdioServer(self.settings, client=self.client, reader=self.inbox, writer=self.outbox,
-                                  log=self.log.append)
+                                  log=self.log.append, **server_options)
         self.thread = threading.Thread(target=self.server.serve, daemon=True)
         self.thread.start()
         self._ids = 0

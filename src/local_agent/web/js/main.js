@@ -1,5 +1,6 @@
 // Start-up of the web UI: read the token from the fragment, check it with /info, open the WebSocket, run
-// initialize and session/new in the server's workspace, then wire the composer to session/prompt.
+// initialize and session/new in the server's workspace, then wire the composer, the model picker, the session
+// list and the settings form.
 //
 // The token is in the URL fragment (`/#token=...`). A browser never sends a fragment to the server, so it is
 // not in any request line or log. The page reads it once, removes it from the address bar, and keeps it in
@@ -7,9 +8,14 @@
 
 import { AcpClient } from "./acp.js";
 import { ChatView } from "./chat.js";
+import { fillSettings, readSettings, renderModelOption, renderSessionList } from "./panels.js";
 import { connectWebSocket } from "./transport.js";
 
 const PROTOCOL_VERSION = 1;
+const LIST_PAGE = "session/list";
+const MODEL_OPTION = "model";
+const EXT_SETTINGS_GET = "_local-agent/settings/get";
+const EXT_SETTINGS_SET = "_local-agent/settings/set";
 
 export function tokenFromFragment(hash) {
   return new URLSearchParams(hash.replace(/^#/, "")).get("token") || "";
@@ -31,97 +37,306 @@ async function fetchInfo(token) {
   return response.json();
 }
 
-async function start(view) {
-  const token = tokenFromFragment(location.hash);
-  if (location.hash) {
-    history.replaceState(null, "", location.pathname + location.search); // the token leaves the address bar
-  }
-  if (!token) {
-    view.setStatus("No token", "bad");
-    view.showNotice("This page needs the token. Open the link that local-agent printed (it ends in #token=...).");
-    return;
+// The page's state: the connection, the open session and the panels. The screen is in ChatView.
+class App {
+  constructor(view, doc) {
+    this.view = view;
+    this.doc = doc;
+    this.client = null;
+    this.cwd = "";
+    this.sessionId = null;
+    this.currentModel = "";
+    this.busy = false;
+    this.dead = false;
+    this.nextCursor = null;
+    this.items = [];
+    this.canList = true;
+    this.model = doc.getElementById("model");
+    this.drawer = doc.getElementById("drawer");
+    this.sessionsToggle = doc.getElementById("sessions-toggle");
+    this.sessionList = doc.getElementById("session-list");
+    this.sessionsEmpty = doc.getElementById("sessions-empty");
+    this.sessionsMore = doc.getElementById("sessions-more");
+    this.newChatButton = doc.getElementById("new-chat");
+    this.settingsOpen = doc.getElementById("settings-open");
+    this.settings = doc.getElementById("settings");
+    this.settingsForm = doc.getElementById("settings-form");
+    this.settingsFile = doc.getElementById("settings-file");
+    this.settingsMessage = doc.getElementById("settings-message");
   }
 
-  let info;
-  try {
-    info = await fetchInfo(token);
+  // Lock or unlock the controls that must not change while a turn runs or the link is gone.
+  lock(locked) {
+    const off = locked || this.dead;
+    for (const node of this.doc.querySelectorAll(".lockable")) {
+      node.disabled = off;
+    }
+    this.model.disabled = off || !this.model.options.length;
+    this.settingsOpen.disabled = this.dead || !this.sessionId;
+  }
+
+  async connect(token) {
+    const info = await fetchInfo(token);
     if (info.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error(`local-agent speaks protocol ${info.protocolVersion}; this page needs ${PROTOCOL_VERSION}.`);
     }
-  } catch (error) {
-    view.setStatus("Not connected", "bad");
-    view.showNotice(error.message);
-    return;
-  }
-
-  let client;
-  try {
     const link = await connectWebSocket(socketUrl(token));
-    client = new AcpClient(link);
-  } catch (error) {
-    view.setStatus("Not connected", "bad");
-    view.showNotice(error.message);
-    return;
-  }
-  client.onUpdate = (update) => view.update(update);
-  client.onPermission = (params) => view.askPermission(params);
-  client.onClose = (reason) => view.disconnected(reason);
-
-  let sessionId;
-  try {
-    const init = await client.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    this.client = new AcpClient(link);
+    this.client.onUpdate = (update) => this.view.update(update);
+    this.client.onPermission = (params) => this.view.askPermission(params);
+    this.client.onClose = (reason) => {
+      this.dead = true;
+      this.view.disconnected(reason);
+      this.lock(true);
+    };
+    const init = await this.client.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     if (init.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error(`The agent answered protocol ${init.protocolVersion}; this page needs ${PROTOCOL_VERSION}.`);
     }
-    ({ sessionId } = await client.request("session/new", { cwd: info.cwd, mcpServers: [] }));
-  } catch (error) {
-    view.setStatus("Not connected", "bad");
-    view.showNotice(error.message);
-    return;
+    this.canList = Boolean(init.agentCapabilities && init.agentCapabilities.sessionCapabilities &&
+      init.agentCapabilities.sessionCapabilities.list);
+    this.cwd = info.cwd;
+    this.view.workspace.textContent = info.cwd;
+    return this.client;
   }
-  view.ready(info.cwd);
-  wireComposer(view, client, sessionId);
-}
 
-function wireComposer(view, client, sessionId) {
-  const form = view.doc.getElementById("composer");
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const text = view.prompt.value.trim();
-    if (!text || view.send.disabled) {
+  // Apply a session/new or session/load answer: the model picker and the warnings it carries.
+  applySession(result) {
+    const option = Array.isArray(result.configOptions)
+      ? result.configOptions.find((item) => item.id === MODEL_OPTION) : null;
+    renderModelOption(this.model, option);
+    this.currentModel = option ? option.currentValue : "";
+    const warnings = result._meta && Array.isArray(result._meta.warnings) ? result._meta.warnings : [];
+    this.view.showNotice(warnings.join(" "));
+  }
+
+  async newChat() {
+    if (this.busy || this.dead) {
       return;
     }
-    view.prompt.value = "";
-    view.showNotice("");
-    view.addUser(text);
-    view.setBusy(true);
+    const result = await this.client.request("session/new", { cwd: this.cwd, mcpServers: [] });
+    this.sessionId = result.sessionId;
+    this.view.reset();
+    this.applySession(result);
+    this.highlight();
+    this.closeDrawer();
+    this.lock(false);
+    this.view.prompt.focus();
+    await this.refreshSessions();
+  }
+
+  async openSession(item) {
+    if (this.busy || this.dead) {
+      return;
+    }
+    this.view.reset();
+    this.view.showNotice(`Opening "${item.title || "Untitled chat"}"...`);
+    this.lock(true);
     try {
-      const result = await client.request("session/prompt", {
-        sessionId,
-        prompt: [{ type: "text", text }],
+      const result = await this.client.request("session/load", {
+        sessionId: item.sessionId, cwd: item.cwd, mcpServers: [],
       });
-      view.turnEnded(result);
+      this.sessionId = item.sessionId;
+      this.applySession(result);
+      this.highlight();
+      this.closeDrawer(); // on a phone the list covers the chat; choosing a chat closes it
     } catch (error) {
-      view.turnFailed(error);
+      this.view.showNotice("");
+      this.view.addError(error.message || String(error));
     } finally {
-      view.prompt.focus();
+      this.lock(false);
+      this.view.prompt.focus();
     }
-  });
-  view.prompt.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      form.requestSubmit();
+  }
+
+  closeDrawer() {
+    this.drawer.hidden = true;
+    this.sessionsToggle.setAttribute("aria-expanded", "false");
+  }
+
+  highlight() {
+    for (const button of this.sessionList.querySelectorAll(".session-item")) {
+      const active = button.dataset.sessionId === this.sessionId;
+      button.classList.toggle("active", active);
+      if (active) {
+        button.setAttribute("aria-current", "true");
+      } else {
+        button.removeAttribute("aria-current");
+      }
     }
-  });
-  view.cancel.addEventListener("click", () => {
-    view.closeApproval();
+  }
+
+  async refreshSessions(cursor) {
+    if (!this.canList) {
+      this.drawer.hidden = true;
+      this.sessionsToggle.hidden = true;
+      return;
+    }
+    const params = cursor ? { cursor } : {};
+    const result = await this.client.request(LIST_PAGE, params);
+    this.items = cursor ? this.items.concat(result.sessions) : result.sessions;
+    this.nextCursor = result.nextCursor || null;
+    this.renderList();
+  }
+
+  renderList() {
+    renderSessionList(this.sessionList, this.items, this.sessionId, (item) => this.openSession(item));
+    this.sessionsEmpty.hidden = this.items.length > 0;
+    this.sessionsMore.hidden = !this.nextCursor;
+    this.lock(this.busy);
+  }
+
+  async changeModel() {
+    if (this.busy || this.dead || !this.sessionId) {
+      return;
+    }
+    const value = this.model.value;
     try {
-      client.notify("session/cancel", { sessionId });
-    } catch {
-      // The connection is gone; the disconnected message already says so.
+      const result = await this.client.request("session/set_config_option", {
+        sessionId: this.sessionId, configId: MODEL_OPTION, value,
+      });
+      this.applySession(result); // the new choice, and the tools warning if the model has no tools
+    } catch (error) {
+      this.model.value = this.currentModel; // the session keeps the model it had
+      this.view.addError(error.message || String(error));
     }
-  });
+  }
+
+  async openSettings() {
+    this.settingsMessage.hidden = true;
+    try {
+      const result = await this.client.request(EXT_SETTINGS_GET, {});
+      fillSettings(this.settingsForm, result.values, result.file);
+      this.settingsFile.textContent = `File: ${result.file}${result.exists ? "" : " (not created yet)"}`;
+      this.settings.showModal();
+    } catch (error) {
+      this.view.addError(error.message || String(error));
+    }
+  }
+
+  async saveSettings(event) {
+    event.preventDefault();
+    this.settingsMessage.hidden = true;
+    try {
+      const result = await this.client.request(EXT_SETTINGS_SET, { values: readSettings(this.settingsForm) });
+      fillSettings(this.settingsForm, result.values, result.file);
+      this.settingsFile.textContent = `File: ${result.file}`;
+      this.showSettingsMessage("Saved. The new settings take effect when local-agent starts again.", false);
+    } catch (error) {
+      this.showSettingsMessage(error.message || String(error), true);
+    }
+  }
+
+  showSettingsMessage(text, isError) {
+    this.settingsMessage.textContent = text;
+    this.settingsMessage.className = isError ? "notice error-text" : "notice ok-text";
+    this.settingsMessage.hidden = false;
+  }
+
+  wireComposer() {
+    const form = this.doc.getElementById("composer");
+    const view = this.view;
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = view.prompt.value.trim();
+      if (!text || view.send.disabled) {
+        return;
+      }
+      view.prompt.value = "";
+      view.showNotice("");
+      view.addUser(text);
+      this.busy = true;
+      view.setBusy(true);
+      this.lock(true);
+      try {
+        const result = await this.client.request("session/prompt", {
+          sessionId: this.sessionId,
+          prompt: [{ type: "text", text }],
+        });
+        view.turnEnded(result);
+      } catch (error) {
+        view.turnFailed(error);
+      } finally {
+        this.busy = false;
+        this.lock(false);
+        if (!this.dead) {
+          this.refreshSessions().catch(() => {});
+        }
+        view.prompt.focus();
+      }
+    });
+    view.prompt.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    view.cancel.addEventListener("click", () => {
+      view.closeApproval();
+      try {
+        this.client.notify("session/cancel", { sessionId: this.sessionId });
+      } catch {
+        // The connection is gone; the disconnected message already says so.
+      }
+    });
+  }
+
+  wirePanels() {
+    this.model.addEventListener("change", () => this.changeModel());
+    this.sessionsToggle.addEventListener("click", () => {
+      this.drawer.hidden = !this.drawer.hidden;
+      this.sessionsToggle.setAttribute("aria-expanded", String(!this.drawer.hidden));
+    });
+    this.newChatButton.addEventListener("click", () => {
+      this.newChat().catch((error) => this.view.addError(error.message || String(error)));
+    });
+    this.sessionsMore.addEventListener("click", () => {
+      this.refreshSessions(this.nextCursor).catch((error) => this.view.addError(error.message || String(error)));
+    });
+    this.settingsOpen.addEventListener("click", () => this.openSettings());
+    this.doc.getElementById("settings-close").addEventListener("click", () => this.settings.close());
+    this.settingsForm.addEventListener("submit", (event) => this.saveSettings(event));
+  }
+
+  async start(token) {
+    try {
+      await this.connect(token);
+    } catch (error) {
+      this.view.setStatus("Not connected", "bad");
+      this.view.showNotice(error.message);
+      return;
+    }
+    this.wirePanels();
+    this.wireComposer();
+    try {
+      const result = await this.client.request("session/new", { cwd: this.cwd, mcpServers: [] });
+      this.sessionId = result.sessionId;
+      this.applySession(result);
+    } catch (error) {
+      this.view.setStatus("Not connected", "bad");
+      this.view.showNotice(error.message);
+      return;
+    }
+    this.view.ready(this.cwd);
+    this.lock(false);
+    this.refreshSessions().catch((error) => this.view.showNotice(error.message || String(error)));
+  }
+}
+
+export function readToken(hash) {
+  const token = tokenFromFragment(hash);
+  if (hash) {
+    history.replaceState(null, "", location.pathname + location.search); // the token leaves the address bar
+  }
+  return token;
 }
 
 const view = new ChatView(document);
-start(view);
+const app = new App(view, document);
+const token = readToken(location.hash);
+if (!token) {
+  view.setStatus("No token", "bad");
+  view.showNotice("This page needs the token. Open the link that local-agent printed (it ends in #token=...).");
+} else {
+  app.start(token);
+}

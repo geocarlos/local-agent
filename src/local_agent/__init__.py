@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 
+from local_agent import config
 from local_agent.config import ConfigError
 from local_agent.frontends import cli, server
 
@@ -77,12 +78,13 @@ def main(argv: list[str] | None = None) -> None:
     # Tool paths resolve against settings.workspace, not the cwd; the chdir only keeps the REPL's own
     # relative paths (and the default for run_command) in the same folder.
     os.chdir(settings.workspace)
+    config_file = args.config if args.config is not None else config.config_path()  # where serve's settings editor writes
     if command == "serve":
         if args.web:
             from local_agent.frontends import web  # imported here: the web stack is not needed for chat or stdio
 
-            web.serve_web(settings, port=args.port or 0)
+            web.serve_web(settings, port=args.port or 0, config_file=config_file)
         else:
-            server.serve_stdio(settings)
+            server.serve_stdio(settings, config_file=config_file)
     else:
         cli.run(settings=settings)

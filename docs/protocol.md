@@ -88,10 +88,10 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
 ```
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[],"agentInfo":{"name":"local-agent","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[],"agentInfo":{"name":"local-agent","version":"0.1.0"}}}
 ```
 
-`protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text blocks only, so all prompt capabilities are `false`. `authMethods` is empty: there is no login.
+`protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text blocks only, so all prompt capabilities are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
 
 ### `session/new` (client request)
 
@@ -99,7 +99,7 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 {"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"C:\\work\\my-project","mcpServers":[]}}
 ```
 ```json
-{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess-6f1c9d0a2b7e4c3f8a1d5e9b0c2f4a6d"}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess-6f1c9d0a2b7e4c3f8a1d5e9b0c2f4a6d","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"qwen3-vl:8b","options":[{"value":"qwen2.5-coder:7b","name":"qwen2.5-coder:7b"},{"value":"qwen3-vl:8b","name":"qwen3-vl:8b"}]}],"_meta":{"model":{"name":"qwen3-vl:8b","tools":true}}}}
 ```
 
 - `cwd` must be an absolute path to an existing folder (else `-32602`). It is the session's workspace: file tools are sandboxed to it, and `run_command` starts there. Each session has its own workspace and its own "allow always" answers.
@@ -108,7 +108,105 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 - `mcpServers` must be a list (else `-32602`). **Not supported yet:** servers named in the request are ignored, and a warning goes to stderr. Configure MCP servers in `config.toml` instead.
 - `additionalDirectories` and `systemPrompt` are ignored.
 - Each session has its own conversation history.
+- `configOptions` is the session's model choice (see `session/set_config_option`). Its choices are the models Ollama has. If Ollama does not answer within 5 s, the only choice is the current model and `_meta.warnings` says why. `_meta.model.tools` is `true`, `false` (the model does not report the `tools` capability; a warning is added to `_meta.warnings`) or `null` (Ollama reports no capabilities).
+- A session is saved after its first turn, not now (see Saved sessions below).
 
+### `session/list` (client request)
+
+Lists the saved sessions (ACP v1; needs `sessionCapabilities.list`). Only sessions that were saved (after a turn) are listed.
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"session/list","params":{"cwd":"C:\\work\\my-project","cursor":"50"}}
+```
+```json
+{"jsonrpc":"2.0","id":4,"result":{"sessions":[{"sessionId":"sess-6f1c...","cwd":"C:\\work\\my-project","title":"What is in README.md?","updatedAt":"2026-11-25T20:40:12+00:00","_meta":{"model":"qwen3-vl:8b"}}],"nextCursor":"50"}}
+```
+
+- Both params are optional. `cwd` (absolute) keeps only the sessions of that folder. `cursor` is the `nextCursor` of the previous page. A page has 50 sessions; `nextCursor` is absent on the last page. A bad cursor is `-32602`.
+- Newest first. A saved file that cannot be read is skipped, with a warning on stderr.
+
+### `session/load` (client request)
+
+Reopens a saved session (ACP v1; needs `loadSession`). The saved history is replayed as `session/update` notifications, and the response comes after the replay:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"session/load","params":{"sessionId":"sess-6f1c...","cwd":"C:\\work\\my-project","mcpServers":[]}}
+```
+```json
+{"jsonrpc":"2.0","id":5,"result":{"configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"qwen3-vl:8b","options":[...]}],"_meta":{"model":{"name":"qwen3-vl:8b","tools":true}}}}
+```
+
+- The replay uses the same updates as a live turn: `user_message_chunk` (a user message, one `messageId` each), `agent_message_chunk` (a reply), and for each tool call a `tool_call` (status `pending`) followed by a `tool_call_update` with status `completed`, or `failed` for a call that was cancelled. The reasoning text is not saved, so it is not replayed.
+- After the load, `session/prompt` continues the conversation: the model sees the saved history.
+- `cwd` is optional. If given, it must be the session's saved folder (else `-32602`). The saved folder is the session's workspace.
+- A session whose folder no longer exists is `-32602`, with a message that says so; the session file is kept. An unknown or unreadable session is `-32002`. A session that is running a prompt in this process is `-32600`.
+- "Allow always" answers are not saved: a reopened session asks again. The model is the saved one; change it with `session/set_config_option`.
+
+### `session/set_config_option` (client request)
+
+Switches the model of one session (ACP v1 session configuration; the only option is `model`):
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"session/set_config_option","params":{"sessionId":"sess-6f1c...","configId":"model","value":"qwen2.5-coder:7b"}}
+```
+```json
+{"jsonrpc":"2.0","id":6,"result":{"configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"qwen2.5-coder:7b","options":[...]}],"_meta":{"model":{"name":"qwen2.5-coder:7b","tools":true}}}}
+```
+
+- `value` must be an installed model. A model Ollama does not have is `-32602`. Ollama unreachable or not answering: `-32603` with the usual Ollama message, and the session keeps its model.
+- A model without the `tools` capability is accepted, with a `_meta.warnings` entry.
+- A prompt running in the session: `-32600`. The change applies to the next prompt. Other sessions keep their own model.
+- The default model for new sessions is the `model` setting (see the settings methods below).
+
+### Extension methods
+
+ACP reserves method names that start with `_` for extensions. These are local-agent's own, the same on stdio and on the WebSocket. They need `initialize` first.
+
+#### `_local-agent/models`
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"_local-agent/models","params":{"sessionId":"sess-6f1c..."}}
+```
+```json
+{"jsonrpc":"2.0","id":7,"result":{"current":"qwen3-vl:8b","models":["qwen2.5-coder:7b","qwen3-vl:8b"],"error":null}}
+```
+
+The installed models from Ollama, for a refresh of the picker. `sessionId` is optional (with it, `current` is that session's model; otherwise the default). When Ollama cannot be reached, `models` is empty and `error` holds the message; the request itself does not fail.
+
+#### `_local-agent/settings/get` and `_local-agent/settings/set`
+
+The settings editor reads and writes the per-user `config.toml`, or the `--config` file the server was started with.
+
+```json
+{"jsonrpc":"2.0","id":8,"method":"_local-agent/settings/get","params":{}}
+```
+```json
+{"jsonrpc":"2.0","id":8,"result":{"file":"C:\\Users\\me\\AppData\\Roaming\\local-agent\\config.toml","exists":true,"values":{"model":"qwen3-vl:8b","host":"http://127.0.0.1:11434","num_ctx":8192,"max_tool_rounds":10,"max_output_chars":8000,"command_timeout_s":60,"network_timeout_s":20,"tool_profile":"coding"},"kinds":{"model":"text","host":"text","num_ctx":"int","max_tool_rounds":"int","max_output_chars":"int","command_timeout_s":"int","network_timeout_s":"int","tool_profile":"choice"},"applies":"restart"}}
+```
+
+- `values` are the file's values with the defaults filled in. A missing file gives the defaults and `exists: false`. A file the agent cannot load is `-32602`, with the reason.
+- `_local-agent/settings/set` takes `{"values": {...}}` with any subset of the editable keys. It checks each value with the same rules as the file and the flags, then writes the file atomically (a temp file, checked as a whole, then renamed over it). The response is the `get` answer with `"saved": true`. The folder is created if needed.
+- **Allowlist (decided).** Only `model`, `host`, `num_ctx`, `max_tool_rounds`, `max_output_chars`, `command_timeout_s`, `network_timeout_s` and `tool_profile` can be set. Any other key is `-32602` and nothing is written. Kept out on purpose: `network_enabled` (turns on the network tool), `workspace` (the default folder for the file tools), `plugin_dir`, `plugins_enabled`, `disabled_plugins` (plugins are Python files that run in the process), `mcp_servers` and `test_command` (they name programs that are started). Those are edited by hand.
+- Comments and the layout of the file are kept (tomlkit). A key this version does not know is refused when the file is loaded, so the editor never writes one. Integer limits: `num_ctx` up to 1048576, `max_output_chars` up to 1000000, `max_tool_rounds` up to 200, `command_timeout_s` and `network_timeout_s` up to 3600; every integer is at most 2**63 - 1. The same limits hold for the file and the flags.
+- **Ollama address (decided).** The editor accepts `host` only when it is loopback (`127.0.0.1`, `localhost` or `::1`, any port). Another host is `-32602` with a message that says to edit `config.toml` by hand. A change of `host` is logged on stderr (it takes effect at the next start).
+- **Applies on restart (decided).** The server reads the file when it starts. A running server keeps its settings; a chat's model changes at any time with `session/set_config_option`. `applies` says `restart`.
+
+## Saved sessions
+
+Each session is saved after each turn, to one JSON file in the per-user data folder: `%APPDATA%\local-agent\sessions\sess-<32 hex digits>.json` (platformdirs, roaming). Nothing is written into the install folder. The environment variable `LOCAL_AGENT_DATA_DIR` replaces the data folder (the tests use it).
+
+```json
+{"format": 1, "id": "sess-...", "cwd": "C:\\work\\my-project", "model": "qwen3-vl:8b", "title": "What is in README.md?", "created": "2026-11-25T20:39:01+00:00", "updated": "2026-11-25T20:40:12+00:00", "messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+```
+
+- Writes are atomic: the JSON goes to a temp file beside the target, is flushed, and is renamed over it. A crash leaves the old file or the new one.
+- A file that cannot be parsed, has another `format`, or whose `id` does not match its name is skipped by `session/list` (a warning on stderr) and refused by `session/load`. One bad file does not hide the others.
+- The title is the first user message, whitespace collapsed and cut to 80 characters.
+- **Limits (decided):** a session file over 5 MiB is not saved. A failed save (too large, or the disk refuses) is logged on stderr and reported to the user: the `session/prompt` answer carries `_meta.warnings` (a list of text), and the chat window shows them. The chat goes on, but its later messages are lost after a restart. At most 200 session files are kept: after a save, the least recently updated files beyond 200 are deleted, with a warning that says how many. Corrupt files count toward the 200 (they are not separated out). A session id from a client must match `sess-` plus 32 lowercase hex digits before any path is built.
+- The reasoning text is not saved. "Allow always" answers are not saved.
+- The CLI (`local-agent chat`) does not save sessions. Only the server does.
+
+## Worked example: Ollama down
 ### `session/prompt` (client request)
 
 ```json
@@ -121,6 +219,7 @@ The server streams `session/update` notifications while the turn runs (see below
 {"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","_meta":{"usage":{"promptTokens":1921,"completionTokens":561}}}}
 ```
 
+- `_meta.warnings` (optional) is a list of text, for example that the chat could not be saved. A failed turn's error carries the same list in `data.warnings`.
 - `stopReason` is `end_turn` (the model finished), `cancelled` (the client sent `session/cancel`, or the server was shut down), or `max_turn_requests` (the tool round cap of `max_tool_rounds` was reached). `max_tokens` and `refusal` are not produced.
 - `_meta.usage` is an extension (ACP has no token counts in the prompt result): `promptTokens` is the prompt size of the last model request, and `completionTokens` the tokens generated over all rounds. It is absent when Ollama reported no counts.
 - Only one prompt runs per session. A second `session/prompt` to a session that is busy gets `-32600` at once; the running turn is not affected.
@@ -240,9 +339,13 @@ A notification with an unknown method, or a `session/cancel` for an unknown sess
 
 ## Deviations from ACP v1
 
-- **Not implemented:** `session/load`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/set_mode`, `session/set_config_option`, authentication, `$/cancel_request`, the client's `fs/*` and `terminal/*` methods (the agent runs its own tools in the workspace), plans, slash commands and subagents.
+Checked for T17 against the v1 release `schema.json` (agentclientprotocol.com, downloaded 2026-11-25): `session/list`, `session/load`, `session/set_config_option`, `user_message_chunk`, `sessionCapabilities.list` (an object, `{}`) and `loadSession` (a boolean) are all there, and none is marked unstable.
+
+- **Not implemented:** `session/resume`, `session/close`, `session/delete`, `session/set_mode`, authentication, `$/cancel_request`, the client's `fs/*` and `terminal/*` methods (the agent runs its own tools in the workspace), plans, slash commands and subagents.
+- **Session configuration:** only the `model` option, through `session/set_config_option` (ACP v1 shape: `configOptions` with `category: "model"`, `type: "select"`). Checked against the v1 schema (see below).
+- **Extensions:** `_local-agent/models`, `_local-agent/settings/get` and `_local-agent/settings/set` (see above).
 - **Prompts:** text blocks only.
-- **`session/new`:** `mcpServers` is accepted and ignored (warning on stderr). `systemPrompt` and `additionalDirectories` are ignored.
+- **`session/new`:** `mcpServers` is accepted and ignored (warning on stderr). `systemPrompt` and `additionalDirectories` are ignored. The answer carries `configOptions` and `_meta`.
 - **Tool calls:** the `title` is generated from the tool name and arguments, not the approval question (the permission request carries that). `status` is `pending` before approval.
 - **Token counts:** ACP has no place for them in the prompt result, so `promptTokens` and `completionTokens` are under `_meta.usage`. The `usage_update` `used` value is the prompt size of the last request, and `size` is `num_ctx`.
 - **Permission options:** `reject_always` is never offered. The `allow_always` option is offered only in the cases listed above.

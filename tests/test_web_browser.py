@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -85,7 +86,8 @@ def served(tmp_path):
     try:
         if not seen.wait(60):
             raise AssertionError("the server did not print its page URL: " + "\n".join(lines))
-        yield {"url": found["url"], "workspace": workspace, "proc": proc}
+        yield {"url": found["url"], "workspace": workspace, "proc": proc, "config": config,
+               "sessions": Path(os.environ["LOCAL_AGENT_DATA_DIR"]) / "sessions"}
     finally:
         proc.kill()  # our own process, by its handle
         proc.wait(timeout=30)
@@ -189,7 +191,91 @@ def test_a_server_that_dies_mid_turn_leaves_the_page_disconnected(edge, served):
 
 
 def test_only_a_missing_msedge_channel_counts_as_not_installed():
-    missing = "Chromium distribution 'msedge' is not found at C:\Program Files\Microsoft\Edge\msedge.exe"
+    missing = r"Chromium distribution 'msedge' is not found at C:\Program Files\Microsoft\Edge\msedge.exe"
     assert edge_not_installed(missing)
     assert not edge_not_installed("Browser closed unexpectedly while starting msedge")
     assert not edge_not_installed("Target page, context or browser has been closed")
+
+
+def test_a_saved_chat_reopens_after_a_reload_and_continues(edge, served):
+    page, console_errors = open_connected(edge, served)
+    try:
+        page.fill("#prompt", "Say hello")
+        page.click("#send")
+        playwright_api.expect(page.locator("#chat .msg.agent .text")).to_have_text(
+            "Hello from the scripted model.", timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator("#send")).to_be_enabled(timeout=TIMEOUT_MS)
+    finally:
+        page.close()
+
+    # A new page (a reload): the chat is gone from the screen, but the session is in the list.
+    page, more_errors = open_connected(edge, served)
+    try:
+        assert page.locator("#chat .msg").count() == 0
+        item = page.locator(".session-item", has_text="Say hello")
+        playwright_api.expect(item).to_have_count(1, timeout=TIMEOUT_MS)
+        item.click()
+        playwright_api.expect(page.locator("#chat .msg.user .text")).to_have_text("Say hello", timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator("#chat .msg.agent .text")).to_have_text(
+            "Hello from the scripted model.", timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator(".session-item.active")).to_have_count(1)
+
+        # The reopened chat continues: the new message is added to the same saved session.
+        page.fill("#prompt", "Say hello again")
+        page.click("#send")
+        playwright_api.expect(page.locator("#chat .msg.user .text")).to_have_count(2, timeout=TIMEOUT_MS)
+        playwright_api.expect(page.locator("#send")).to_be_enabled(timeout=TIMEOUT_MS)
+        saved = list(served["sessions"].glob("sess-*.json"))
+        assert len(saved) == 1
+        assert '"Say hello again"' in saved[0].read_text(encoding="utf-8")
+    finally:
+        page.close()
+    assert not [e for e in more_errors + console_errors if "Content Security Policy" in e]
+
+
+def test_the_model_picker_and_the_settings_round_trip(edge, served):
+    page, _ = open_connected(edge, served)
+    try:
+        model = page.locator("#model")
+        playwright_api.expect(model).to_be_enabled(timeout=TIMEOUT_MS)
+        values = model.locator("option").all_inner_texts()
+        assert "qwen2.5-coder:7b" in values and "qwen3-vl:8b" in values
+        model.select_option("qwen2.5-coder:7b")
+        playwright_api.expect(model).to_have_value("qwen2.5-coder:7b", timeout=TIMEOUT_MS)
+
+        page.click("#settings-open")
+        dialog = page.locator("#settings")
+        playwright_api.expect(dialog).to_be_visible(timeout=TIMEOUT_MS)
+        page.fill("#set-num_ctx", "4096")
+        page.click("#settings-save")
+        playwright_api.expect(page.locator("#settings-message")).to_contain_text("Saved", timeout=TIMEOUT_MS)
+        assert "num_ctx = 4096" in served["config"].read_text(encoding="utf-8")
+        page.click("#settings-close")
+        playwright_api.expect(dialog).to_be_hidden(timeout=TIMEOUT_MS)
+    finally:
+        page.close()
+
+    page, _ = open_connected(edge, served)
+    try:
+        page.click("#settings-open")
+        playwright_api.expect(page.locator("#set-num_ctx")).to_have_value("4096", timeout=TIMEOUT_MS)
+        page.click("#settings-close")
+    finally:
+        page.close()
+
+
+def test_the_page_works_at_phone_width(edge, served):
+    page = edge.new_page(viewport={"width": 390, "height": 800})
+    try:
+        page.goto(served["url"])
+        playwright_api.expect(page.locator("#status")).to_have_text("Connected", timeout=TIMEOUT_MS)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        drawer = page.locator("#drawer")
+        expect = playwright_api.expect
+        expect(drawer).to_be_hidden()
+        page.click("#sessions-toggle")
+        expect(drawer).to_be_visible(timeout=TIMEOUT_MS)
+        page.click("#new-chat")
+        expect(drawer).to_be_hidden(timeout=TIMEOUT_MS)  # the new chat opens; the list closes on a choice only
+    finally:
+        page.close()

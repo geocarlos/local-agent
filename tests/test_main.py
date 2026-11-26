@@ -33,7 +33,7 @@ def test_serve_stdio_takes_the_same_flags_as_chat(monkeypatch, tmp_path):
     folder = tmp_path / "work"
     folder.mkdir()
     seen = {}
-    monkeypatch.setattr(server, "serve_stdio", lambda settings: seen.setdefault("settings", settings))
+    monkeypatch.setattr(server, "serve_stdio", lambda settings, **kwargs: seen.setdefault("settings", settings))
 
     main(["serve", "--stdio", "--model", "some-model", "--cwd", str(folder), "--num-ctx", "4096",
           "--config", str(_empty_config(tmp_path))])
@@ -106,7 +106,7 @@ def test_serve_web_takes_the_flags_and_the_port(monkeypatch, tmp_path):
 
     monkeypatch.chdir(tmp_path)
     seen = {}
-    monkeypatch.setattr(web, "serve_web", lambda settings, *, port=0: seen.update(port=port, model=settings.model))
+    monkeypatch.setattr(web, "serve_web", lambda settings, *, port=0, **kwargs: seen.update(port=port, model=settings.model))
     main(["serve", "--web", "--port", "8123", "--model", "some-model", "--config", str(_empty_config(tmp_path))])
     assert seen == {"port": 8123, "model": "some-model"}
 
@@ -116,7 +116,7 @@ def test_serve_web_without_a_port_takes_a_free_one(monkeypatch, tmp_path):
 
     monkeypatch.chdir(tmp_path)
     seen = {}
-    monkeypatch.setattr(web, "serve_web", lambda settings, *, port=0: seen.setdefault("port", port))
+    monkeypatch.setattr(web, "serve_web", lambda settings, *, port=0, **kwargs: seen.setdefault("port", port))
     main(["serve", "--web", "--config", str(_empty_config(tmp_path))])
     assert seen["port"] == 0
 

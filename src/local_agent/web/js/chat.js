@@ -138,10 +138,22 @@ export class ChatView {
     this.closeApproval();
   }
 
+  // Empty the conversation before a saved session is replayed (or a new chat starts).
+  reset() {
+    this.chat.replaceChildren();
+    this.streams.clear();
+    this.tools.clear();
+    this.context = null;
+    this.lastTurnTokens = null;
+    this._renderUsage();
+    this.showNotice("");
+  }
+
   setBusy(busy) {
     if (this.dead) {
       return; // a late answer after a disconnect must not bring the controls back
     }
+    this.doc.body.classList.toggle("busy", busy); // CSS disables the .lockable controls while a turn runs
     this.send.disabled = busy;
     this.prompt.disabled = busy;
     this.cancel.disabled = !busy;
@@ -176,6 +188,9 @@ export class ChatView {
       case "agent_thought_chunk":
         this._streamText("thought", update.messageId, update.content);
         break;
+      case "user_message_chunk": // a saved message replayed by session/load
+        this._userText(update.messageId, update.content);
+        break;
       case "tool_call":
         this._toolCall(update);
         break;
@@ -200,8 +215,18 @@ export class ChatView {
     this.addSystem(STOP_LABELS[reason] || `Turn ended (${reason}).`);
     const tokens = result && result._meta && result._meta.usage;
     this.lastTurnTokens = tokens ? tokens.completionTokens : null;
+    this.addWarnings(result && result._meta && result._meta.warnings);
     this._renderUsage();
     this.setBusy(false);
+  }
+
+  // Warnings the agent sends with an answer (for example, the chat could not be saved). Shown as text.
+  addWarnings(warnings) {
+    for (const text of Array.isArray(warnings) ? warnings : []) {
+      const node = el("div", "msg warning");
+      node.append(el("span", "label", "Warning"), el("div", "text", String(text)));
+      this._append(node);
+    }
   }
 
   // After a disconnect the disconnect notice already says what happened, so there is no second message.
@@ -210,6 +235,7 @@ export class ChatView {
       return;
     }
     this.addError(error && error.message ? error.message : String(error));
+    this.addWarnings(error && error.data && error.data.warnings);
     this.setBusy(false);
   }
 
@@ -265,6 +291,22 @@ export class ChatView {
   _append(node) {
     this.chat.append(node);
     node.scrollIntoView({ block: "nearest" });
+  }
+
+  // A replayed user message: one bubble per messageId, the same look as a message sent now.
+  _userText(messageId, content) {
+    const text = content && typeof content.text === "string" ? content.text : "";
+    const key = `user:${messageId}`;
+    let body = this.streams.get(key);
+    if (!body) {
+      const node = el("div", "msg user");
+      node.append(el("span", "label", "You"));
+      body = el("div", "text");
+      node.append(body);
+      this.streams.set(key, body);
+      this._append(node);
+    }
+    body.append(this.doc.createTextNode(text));
   }
 
   _streamText(kind, messageId, content) {
