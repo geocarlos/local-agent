@@ -1,7 +1,11 @@
-# PyInstaller spec for local-agent: a console app built in --onedir mode.
+# PyInstaller spec for local-agent, in --onedir mode, with two executables that share one folder:
+#   local-agent.exe      a console app: chat, serve --stdio, serve --web and gui (run from a terminal).
+#   local-agent-gui.exe  the same program with no console window (packaging/gui_launcher.py): gui only,
+#                        for the Start menu (T18). Its output goes to gui.log in the data folder.
 #
 # Run from the repo root with packaging\build.ps1 (it runs `pyinstaller packaging/local-agent.spec`).
-# Output: dist/local-agent/local-agent.exe and the files it needs next to it.
+# Output: dist/local-agent/ with both exes and the files they need. MERGE keeps the shared modules and
+# binaries (pythonnet, WebView2 loader, uvicorn, ...) in one copy.
 
 from pathlib import Path
 
@@ -43,25 +47,40 @@ for dist in METADATA:
 # The web UI (T16): the static page and its scripts. In the bundle they sit in local_agent/web, which
 # webassets.web_root() finds under sys._MEIPASS.
 datas.append((str(ROOT / "src" / "local_agent" / "web"), "local_agent/web"))
+# The desktop window (T18) needs pywebview and its Windows backend (pythonnet, clr_loader, the WebView2
+# loader DLLs). Their PyInstaller hooks are in pyinstaller-hooks-contrib (hook-webview, hook-clr,
+# hook-clr_loader) and are found automatically; the smoke test imports them in the frozen app.
 
-a = Analysis(  # noqa: F821
-    [str(ROOT / "packaging" / "launcher.py")],
-    pathex=[str(ROOT / "src")],
-    binaries=[],
-    datas=datas,
-    hiddenimports=hiddenimports,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=["tkinter"],
-    noarchive=False,
-    optimize=0,
+
+def _analysis(script: Path) -> Analysis:  # noqa: F821
+    return Analysis(  # noqa: F821
+        [str(script)],
+        pathex=[str(ROOT / "src")],
+        binaries=[],
+        datas=list(datas),
+        hiddenimports=list(hiddenimports),
+        hookspath=[],
+        hooksconfig={},
+        runtime_hooks=[],
+        excludes=["tkinter"],
+        noarchive=False,
+        optimize=0,
+    )
+
+
+console_analysis = _analysis(ROOT / "packaging" / "launcher.py")
+window_analysis = _analysis(ROOT / "packaging" / "gui_launcher.py")
+# The second and third names are the script names (the file stems); MERGE then makes both executables share
+# the modules and binaries that they have in common.
+MERGE(  # noqa: F821
+    (console_analysis, "launcher", "launcher"),
+    (window_analysis, "gui_launcher", "gui_launcher"),
 )
-pyz = PYZ(a.pure)  # noqa: F821
 
-exe = EXE(  # noqa: F821
-    pyz,
-    a.scripts,
+console_pyz = PYZ(console_analysis.pure)  # noqa: F821
+console_exe = EXE(  # noqa: F821
+    console_pyz,
+    console_analysis.scripts,
     [],
     exclude_binaries=True,
     name="local-agent",
@@ -76,10 +95,31 @@ exe = EXE(  # noqa: F821
     codesign_identity=None,
     entitlements_file=None,
 )
+window_pyz = PYZ(window_analysis.pure)  # noqa: F821
+window_exe = EXE(  # noqa: F821
+    window_pyz,
+    window_analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="local-agent-gui",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,  # no console window: the Start menu shortcut opens the window only
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
 coll = COLLECT(  # noqa: F821
-    exe,
-    a.binaries,
-    a.datas,
+    console_exe,
+    console_analysis.binaries,
+    console_analysis.datas,
+    window_exe,
+    window_analysis.binaries,
+    window_analysis.datas,
     strip=False,
     upx=False,
     upx_exclude=[],

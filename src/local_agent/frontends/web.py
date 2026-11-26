@@ -247,6 +247,124 @@ def bind_loopback(port: int) -> socket.socket:
     return sock
 
 
+STARTUP_TIMEOUT_S = 15.0
+
+
+class ServerStartError(RuntimeError):
+    """The web server could not start: plugins or MCP servers failed, or uvicorn stopped before it listened."""
+
+
+def _stderr_log(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+class WebServer:
+    """The web server of `serve --web`, running in this process (T15, T18).
+
+    It binds 127.0.0.1 on `port` (0: a free port), makes the token, and wraps the server in the plugins and
+    MCP servers (`server.running_agent`). `start` runs uvicorn on a background thread and returns once it is
+    listening. `stop` shuts it down: the WebSocket connections end and their turns are cancelled, then the
+    plugins close, all under the same deadline as stdio (`SHUTDOWN_DEADLINE_S`). `serve_web` and the desktop
+    window (`frontends/gui.py`) both use it.
+
+    `log` receives the server's own lines. Nothing here prints the token: `serve_web` prints it on purpose.
+    Raises OSError from the constructor when the port cannot be bound.
+    """
+
+    def __init__(self, settings: Settings, *, port: int = 0, client: Any = None,
+                 log: Callable[[str], None] = _stderr_log, store: sessions.SessionStore | None = None,
+                 config_file: Path | None = None) -> None:
+        self._settings = settings
+        self._log = log
+        self._sock = bind_loopback(port)
+        self.port: int = self._sock.getsockname()[1]
+        self.token: str = new_token()
+        self._client = ollama.Client(host=settings.host) if client is None else client
+        self._store = sessions.SessionStore(sessions.sessions_folder(), log=log) if store is None else store
+        self._threads: list[threading.Thread] = []  # one per WebSocket connection, joined at stop
+        app = create_app(settings, token=self.token, port=self.port, client=self._client, log=log,
+                         threads=self._threads, store=self._store,
+                         config_file=config.config_path() if config_file is None else config_file)
+        self._uv_server = uvicorn.Server(uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES,
+                                                        access_log=False, log_level="warning", lifespan="off"))
+        self._stack = contextlib.ExitStack()
+        self._thread: threading.Thread | None = None
+        self._error: BaseException | None = None
+        self._stopped = False
+
+    @property
+    def url(self) -> str:
+        """The page's address without the token."""
+        return f"http://127.0.0.1:{self.port}/"
+
+    @property
+    def link(self) -> str:
+        """The page's address with the token in the fragment: a browser never sends a fragment to the server."""
+        return f"{self.url}#{TOKEN_PARAM}={self.token}"
+
+    @property
+    def websocket_url(self) -> str:
+        return f"ws://127.0.0.1:{self.port}{WS_PATH}?{TOKEN_PARAM}={self.token}"
+
+    @property
+    def error(self) -> BaseException | None:
+        """What stopped uvicorn, if it stopped by an error rather than by `stop`."""
+        return self._error
+
+    def is_serving(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self, timeout_s: float = STARTUP_TIMEOUT_S) -> None:
+        """Start the plugins and MCP servers, then uvicorn. Returns once the server is listening."""
+        try:
+            self._stack.enter_context(acp.running_agent(self._settings, client=self._client, log=self._log))
+        except Exception as e:
+            self._close_socket()
+            raise ServerStartError(f"the plugins or MCP servers did not start: {e}") from e
+        self._thread = threading.Thread(target=self._run, name="web-server", daemon=True)
+        self._thread.start()
+        deadline = time.monotonic() + timeout_s
+        while not self._uv_server.started and self._thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not self._uv_server.started:
+            self.stop()
+            if self._error is not None:
+                raise ServerStartError(f"the web server stopped while it started: {self._error}") from self._error
+            raise ServerStartError("the web server did not start in time")
+
+    def _run(self) -> None:
+        try:
+            self._uv_server.run(sockets=[self._sock])
+        except BaseException as e:  # kept for start and for the caller; the thread ends
+            self._error = e
+
+    def stop(self) -> None:
+        """Shut the server down: stop accepting, end the connections, wait for their threads, close the plugins.
+        Safe to call more than once."""
+        if self._stopped:
+            return
+        self._stopped = True
+        end = time.monotonic() + acp.SHUTDOWN_DEADLINE_S
+        self._uv_server.should_exit = True
+        if self._thread is not None:
+            self._thread.join(max(0.0, end - time.monotonic()))
+            if self._thread.is_alive():
+                self._uv_server.force_exit = True
+                self._thread.join(1.0)
+        for thread in self._threads:
+            thread.join(max(0.0, end - time.monotonic()))
+        still_running = [t for t in self._threads if t.is_alive()]
+        if still_running:
+            self._log(f"Warning: {len(still_running)} connection(s) did not stop within "
+                      f"{acp.SHUTDOWN_DEADLINE_S:g} s; exiting anyway.")
+        self._stack.close()  # plugins and MCP servers close after the connections' turns stop
+        self._close_socket()
+
+    def _close_socket(self) -> None:
+        with contextlib.suppress(OSError):
+            self._sock.close()
+
+
 def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: TextIO | None = None,
               store: sessions.SessionStore | None = None, config_file: Path | None = None) -> None:
     """Run the web server until it is stopped (Ctrl+C). The URL and the token are printed to stderr.
@@ -261,38 +379,28 @@ def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: 
         print(line, file=errors, flush=True)
 
     try:
-        sock = bind_loopback(port)
+        server = WebServer(settings, port=port, client=client, log=log, store=store, config_file=config_file)
     except OSError as e:
         log(f"Error: cannot listen on 127.0.0.1:{port}: {e}")
         raise SystemExit(1) from None
-    bound_port = sock.getsockname()[1]
-    token = new_token()
-    if client is None:
-        client = ollama.Client(host=settings.host)
-    threads: list[threading.Thread] = []
-    if store is None:
-        store = sessions.SessionStore(sessions.sessions_folder(), log=log)
-    app = create_app(settings, token=token, port=bound_port, client=client, log=log, threads=threads,
-                     store=store, config_file=config_file)
-    uv_config = uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES, access_log=False,
-                               log_level="warning", lifespan="off")
-    uv_server = uvicorn.Server(uv_config)
-    try:
-        with contextlib.redirect_stdout(errors), acp.running_agent(settings, client=client, log=log):
-            try:
-                log(f"local-agent web server: http://127.0.0.1:{bound_port}/")
-                # The token is in the fragment: a browser never sends it to the server, and the page removes it from the address bar.
-                log(f"Open this link in a browser: http://127.0.0.1:{bound_port}/#{TOKEN_PARAM}={token}")
-                log(f"WebSocket: ws://127.0.0.1:{bound_port}{WS_PATH}?{TOKEN_PARAM}={token}")
-                log("The token is new on every start. Anyone who has it can make the agent act as you: keep it private.")
-                uv_server.run(sockets=[sock])
-            except KeyboardInterrupt:  # Ctrl+C stops the server like it stops the stdio server
-                pass
-            finally:
-                # Each connection cancels its turns when its socket closes; wait for them, with one deadline.
-                end = time.monotonic() + acp.SHUTDOWN_DEADLINE_S
-                for thread in threads:
-                    thread.join(max(0.0, end - time.monotonic()))
-    finally:
-        with contextlib.suppress(OSError):
-            sock.close()
+    with contextlib.redirect_stdout(errors):
+        try:
+            server.start()
+        except ServerStartError as e:
+            log(f"Error: {e}")
+            raise SystemExit(1) from None
+        try:
+            log(f"local-agent web server: {server.url}")
+            # The token is in the fragment: a browser never sends it to the server, and the page removes it from the address bar.
+            log(f"Open this link in a browser: {server.link}")
+            log(f"WebSocket: {server.websocket_url}")
+            log("The token is new on every start. Anyone who has it can make the agent act as you: keep it private.")
+            while server.is_serving():
+                time.sleep(0.5)  # a short wait, so Ctrl+C is seen on Windows too (a plain join is not interruptible there)
+        except KeyboardInterrupt:  # Ctrl+C stops the server like it stops the stdio server
+            pass
+        finally:
+            server.stop()
+        if server.error is not None:
+            log(f"Error: the web server stopped: {server.error}")
+            raise SystemExit(1)

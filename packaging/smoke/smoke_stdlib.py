@@ -1,6 +1,6 @@
 """Smoke-test plugin for packaging\\smoke-exe.ps1. It is copied into a temp plugin folder, not run from the repo.
 
-It imports the standard-library modules that plugins may use, records each result in the JSON file named by the
+It imports the standard-library modules that plugins may use and the window backend (T18), records each result in the JSON file named by the
 SMOKE_RESULTS environment variable, and registers one tool so the plugin is not left out for having no tools.
 """
 
@@ -23,8 +23,12 @@ MODULES = [
     "unittest",
 ]
 
+# The desktop window (T18): pywebview's Windows backend loads pythonnet and the .NET runtime when it is imported.
+# Importing it opens no window.
+WINDOW_MODULES = ["webview", "clr", "webview.platforms.winforms"]
+
 RESULTS: dict[str, str] = {}
-for _name in MODULES:
+for _name in MODULES + WINDOW_MODULES:
     try:
         importlib.import_module(_name)
         RESULTS[_name] = "ok"

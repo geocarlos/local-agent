@@ -195,6 +195,17 @@ def test_iss_has_the_path_functions(iss_text):
         assert f"function {name}" in iss_text or f"procedure {name}" in iss_text
 
 
+def test_iss_adds_a_start_menu_shortcut_to_the_window_only(iss_text):
+    # T18: the window (local-agent-gui.exe, no console) in the all-users Start menu; the console exe gets none.
+    section = iss_text.split("[Icons]", 1)[1].split("[Code]", 1)[0]
+    entries = [line for line in section.splitlines() if line.startswith("Name:")]
+    assert len(entries) == 1
+    assert "{autoprograms}" in entries[0]
+    assert r'Filename: "{app}\local-agent-gui.exe"' in entries[0]
+    assert "local-agent.exe" not in section
+    assert "WorkingDir:" not in entries[0]  # the app picks the folder; a WorkingDir would be fixed at install time
+
+
 def test_iss_removes_path_only_after_uninstall(iss_text):
     assert "usPostUninstall" in iss_text
 
