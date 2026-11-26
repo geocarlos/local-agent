@@ -21,6 +21,10 @@
       {
         "command": "wildcatCodeAgent.openChat",
         "title": "Wildcat Code Agent: Open chat"
+      },
+      {
+        "command": "wildcatCodeAgent.addSelection",
+        "title": "Wildcat Code Agent: Add Selection to Chat"
       }
     ],
     "configuration": {
@@ -37,7 +41,23 @@
           "markdownDescription": "The command that starts the agent. `serve --stdio` and `--cwd <workspace folder>` are added. The default `wildcat-code-agent` must be on PATH. For development from the repo, use `[\"uv\", \"run\", \"--project\", \"C:\\path\\to\\wildcat-code-agent\", \"wildcat-code-agent\"]`. Reload the window after a change."
         }
       }
-    }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "wildcatCodeAgent.addSelection",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "wildcatCodeAgent.addSelection",
+        "key": "ctrl+alt+l",
+        "when": "editorHasSelection"
+      }
+    ]
   },
   "scripts": {
     "copy-webview": "node scripts/copy-webview.mjs",

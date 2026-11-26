@@ -225,3 +225,14 @@ pre.code .line.meta { color: var(--muted); }
   background: var(--code-bg); border: 1px solid var(--border);
 }
 body.busy .lockable { cursor: default; }
+
+/* Editor context (T21): attachment chips above the prompt, and the @file list. */
+.attachments, .mentions { margin: 0 0 0.4rem; }
+.attachments[hidden], .mentions[hidden] { display: none; }
+.attachments { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip { display: inline-flex; align-items: center; gap: 0.3rem; border: 1px solid currentColor; border-radius: 999px; padding: 0.1rem 0.6rem; font-size: 0.85rem; }
+.chip.toggle input { margin: 0; }
+.chip-remove { background: none; border: 0; color: inherit; cursor: pointer; padding: 0 0.2rem; font: inherit; }
+.mentions { list-style: none; padding: 0.2rem; border: 1px solid currentColor; border-radius: 6px; max-height: 12rem; overflow: auto; background: Canvas; color: CanvasText; }
+.mentions li { padding: 0.2rem 0.5rem; cursor: pointer; font-family: monospace; }
+.mentions li.active { background: Highlight; color: HighlightText; }

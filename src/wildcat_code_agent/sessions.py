@@ -30,6 +30,7 @@ from typing import Any
 
 import platformdirs
 
+from wildcat_code_agent import attachments
 from wildcat_code_agent.atomic import atomic_write_text
 from wildcat_code_agent.config import APP_NAME, ENV_DATA_DIR, LEGACY_APP_NAME, adopt_legacy_folder
 
@@ -62,10 +63,12 @@ def sessions_folder() -> Path:
 
 
 def title_of(messages: list[dict]) -> str | None:
-    """The title: the first user message, whitespace collapsed and cut to TITLE_CHARS. None if there is none."""
+    """The title: the first user message's typed text, whitespace collapsed and cut to TITLE_CHARS. A prompt with
+    only attached context uses the first attachment's label. None if there is none."""
     for message in messages:
         if message.get("role") == "user":
-            text = " ".join(str(message.get("content") or "").split())
+            typed, label = attachments.split_history(str(message.get("content") or ""))
+            text = " ".join(typed.split()) or (label or "")
             if text:
                 return text if len(text) <= TITLE_CHARS else text[:TITLE_CHARS - 3] + "..."
     return None

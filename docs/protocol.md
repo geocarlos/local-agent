@@ -88,10 +88,10 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
 ```
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[],"agentInfo":{"name":"wildcat-code-agent","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":true}},"authMethods":[],"agentInfo":{"name":"wildcat-code-agent","version":"0.1.0"}}}
 ```
 
-`protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text blocks only, so all prompt capabilities are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
+`protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text, `resource_link` and embedded text `resource` blocks (see "Prompt content" below), so `embeddedContext` is `true`. `image` and `audio` are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
 
 `clientCapabilities` is read (T20): with `fs.readTextFile`, `fs.writeTextFile` or `terminal` set to `true`, the agent sends the client methods in "Client methods" below for the file and command tools. Each one is separate. The agent does not advertise anything for them of its own. The CLI, the browser and the pywebview window declare none, so they keep the local tools.
 
@@ -225,7 +225,50 @@ The server streams `session/update` notifications while the turn runs (see below
 - `stopReason` is `end_turn` (the model finished), `cancelled` (the client sent `session/cancel`, or the server was shut down), or `max_turn_requests` (the tool round cap of `max_tool_rounds` was reached). `max_tokens` and `refusal` are not produced.
 - `_meta.usage` is an extension (ACP has no token counts in the prompt result): `promptTokens` is the prompt size of the last model request, and `completionTokens` the tokens generated over all rounds. It is absent when Ollama reported no counts.
 - Only one prompt runs per session. A second `session/prompt` to a session that is busy gets `-32600` at once; the running turn is not affected.
-- `prompt` must be a non-empty list of `text` blocks. Other block types (images, resource links, embedded resources) get `-32602`, since the agent does not declare those capabilities. An empty or all-whitespace text is `-32602` too. Text that is not valid Unicode, such as a lone surrogate (JSON `"\ud800"`), is `-32602`; the message is not added to history.
+- `prompt` must be a non-empty list of content blocks: `text`, `resource_link` and embedded text `resource` (see "Prompt content" below). Other block types (images, audio, binary `resource` blocks) get `-32602`, since the agent does not declare those capabilities. A prompt with no typed text and no attachments is `-32602`. An embedded `resource` whose `uri` does not parse is `-32602`. Typed text that is not valid Unicode, such as a lone surrogate (JSON `"\ud800"`), is `-32602`; the message is not added to history. Editor text with a lone surrogate is not refused: the surrogate becomes U+FFFD.
+
+### Prompt content (T21)
+
+`session/prompt`'s `prompt` is a list of ACP v1 content blocks. The shapes were checked against the v1 schema (agentclientprotocol.com/protocol/content, fetched 2026-11-26): `text` (`text`); `resource_link` (`uri`, `name`, optional `mimeType`, `title`, `description`, `size`); `resource` (`resource` with `uri`, `text`, optional `mimeType` for text, or `uri`, `blob` for binary). `embeddedContext` in `promptCapabilities` says the agent takes embedded `resource` blocks; the agent advertises it.
+
+| Block | What it is | Handling |
+|---|---|---|
+| `text` | the typed message | the texts are joined with newlines and stripped, as before |
+| `resource_link` | a file, by `file:` URI | read by the agent (see below) |
+| `resource` with `text` | the editor's own text, such as a selection | included as sent; a `#L<start>-L<end>` fragment on the URI gives its lines (1-based, inclusive) |
+| `resource` with `blob`, `image`, `audio` | binary | `-32602` |
+
+**Where it goes.** The model message is the typed text, then `=== attached context <fence> ===`, then a preamble that says the text is data and not instructions, then one section per attachment, then `=== end of attached context <fence> ===`. The fence is a random token (16 hex characters, `secrets.token_hex(8)`) made for each message. Every boundary line carries it, and the preamble says that only lines carrying the token are boundaries, so file text that contains old-style or guessed delimiters cannot end a section early:
+
+```
+--- <fence> file: src/app.py (lines 2-3, the selected text) ---
+...text...
+--- <fence> end of file: src/app.py ---
+--- <fence> not included: notes/private.txt: it is outside the workspace; ask for it with read_file if it is needed ---
+--- <fence> diagnostics for file:///w/src/app.py: 1 ---
+line 4, column 1: error (pyright): undefined name 'x'
+--- <fence> end of diagnostics ---
+```
+
+A prompt with only attachments and no typed text is valid. A prompt with no attachments is the text alone, as before.
+
+**The context is for the current turn only.** The model gets the full context in the turn it was attached to. The saved history (and so every later turn and the saved file) keeps the typed text and a short marker listing the attachments, for example `[attached context, for this turn only: src/app.py (lines 2-3); notes.md]`. The chat replay shows the typed text and `[with attached context]`. So a file that is open with the toggle on is not re-added to the history each prompt.
+
+**Titles.** A session's title is the typed text, whitespace collapsed. A prompt with only attachments is titled by its first attachment's path.
+
+**`resource_link` rules (T05 sandbox).** Only `file:` URIs with an empty or `localhost` host are read. The path is resolved as the sandbox resolves a tool path. A path outside the workspace, or one the sandbox refuses, is **not included** and is not asked about: the note tells the model to ask for it with `read_file` if needed, which asks the user as usual. A URI that does not parse, a non-file scheme, or a host other than `localhost` gets a note (`not included: <uri>: invalid URI`, or `only files in the workspace can be attached`). A file that is missing, is a folder, is binary or is not UTF-8 gets a note. A file over 4 MiB is not read. When the client advertised `fs.readTextFile` (the VS Code extension does), the text is read through the editor, so unsaved changes are included; otherwise it is read from disk. After one editor read times out in a turn, the rest of that turn's links are read from disk without waiting for the editor again.
+
+**Fragments (decided).** A `resource_link` fragment is ignored: the whole file is sent. For an embedded `resource`, `#L<a>-L<b>` gives the lines. `#L5-L2` is read as lines 2-5 (the range is put in order). `#L0` (or `L0-L3`) is not a line: the whole file is included with a note that says so. Any other fragment, such as the column form `#L3C1`, is not parsed: the whole text is included with a note that the fragment is ignored.
+
+**Truncated selections.** When a selection is cut, its note gives the lines that are kept, for example `the selection's lines 5-79 are included, not 5-10`.
+
+**`resource` (embedded) rules.** The text is the user's own buffer, so it is included as sent, even if its file is outside the workspace (then its label is the absolute path). A lone surrogate in it becomes U+FFFD. A `uri` that does not parse is `-32602`.
+
+**Limits.** A section holds at most 40,000 characters. The whole context holds at most `min(120,000, num_ctx * 3 / 2)` characters (half the model's window at 3 characters per token). A section that is cut says `[truncated: the first N of M characters are included]`. An item that does not fit gets a `not included` note. A prompt has at most 20 attachments; the others get one `not included` note. Each diagnostic message is cut to 500 characters, and at most 50 diagnostics are sent per file (`[N more not shown]`). The numbers are constants in `src/wildcat_code_agent/attachments.py`.
+
+**Diagnostics.** When the client declares `clientCapabilities._meta["wildcat-code-agent"].diagnostics` as `true`, the agent asks the client for the diagnostics of the attached files (`_wildcat-code-agent/diagnostics`, below) and adds a diagnostics section after each file. Without the declaration the agent does not ask.
+
+**History.** The saved history keeps the whole message, context included, as tool results already are. A session replay shows the typed text followed by `[with attached context]`, not the context itself.
 
 ### `session/cancel` (client notification)
 
@@ -345,6 +388,10 @@ The names and shapes are ACP v1's, checked against the v1 release `schema.json` 
 - Approval and the sandbox are unchanged: the agent asks `session/request_permission` first where a tool asks, a path outside the workspace is asked for, and nothing is sent to the client for a call that is refused.
 - The approval diff for `write_file` and `edit_file` is computed from the client's text when the client can read, so the user sees the change against what is in the editor.
 
+### `_wildcat-code-agent/diagnostics` (agent request to the client, T21)
+
+Sent during a `session/prompt`, only when the client declared the diagnostics capability (see "Prompt content"). Params: `{sessionId, uris: [string]}`, the `file:` URIs of the attached files without their line fragments. The client answers `{files: [{uri, items: [...]}]}`, one entry per requested URI, each item `{severity, startLine, startColumn, message}` with `severity` one of `error`, `warning`, `information`, `hint`, lines and columns 1-based, and optional `endLine`, `endColumn`, `source`. Malformed items are dropped; an error answer or no answer just leaves the diagnostics out of the context. The VS Code host answers from `vscode.languages.getDiagnostics`.
+
 ## Errors
 
 Errors are JSON-RPC error responses with `code`, `message` and, where useful, `data`.
@@ -354,7 +401,7 @@ Errors are JSON-RPC error responses with `code`, `message` and, where useful, `d
 | `-32700` | Parse error: the line is not valid JSON, or is nested too deeply to parse | any; `id` is `null` |
 | `-32600` | Invalid request: not a JSON-RPC 2.0 object; a request other than `initialize` before `initialize`; a second prompt while one runs in the session; a line over 16 MiB; a `session/new` beyond 64 sessions | any |
 | `-32601` | Method not found | any request |
-| `-32602` | Invalid params: a missing or wrong field, a relative or missing `cwd`, an unsupported prompt block, an empty prompt, prompt text that is not valid Unicode | `initialize`, `session/new`, `session/prompt` |
+| `-32602` | Invalid params: a missing or wrong field, a relative or missing `cwd`, an unsupported prompt block, an empty prompt, prompt text that is not valid Unicode, an embedded resource with a malformed URI | `initialize`, `session/new`, `session/prompt` |
 | `-32002` | Resource not found: unknown `sessionId` (`data.sessionId`) | `session/prompt` |
 | `-32603` | Internal error. Also used for a failed turn: Ollama unreachable, model not installed, or an unexpected bug. The message says which, for example `Cannot reach Ollama at http://127.0.0.1:11434. Start it with ollama serve ...` | `session/prompt` |
 
@@ -381,7 +428,7 @@ Checked for T17 against the v1 release `schema.json` (agentclientprotocol.com, d
 - **Client methods (T20):** the agent sends `terminal/create` with `args: []` for a command line (it runs through the client's shell, not as a program). ACP says `command` is the program; a client that starts it directly would not run `cmd` lines. The VS Code host runs them through the shell. `fs/read_text_file` `line` and `limit` are not sent by the agent yet.
 - **Session configuration:** only the `model` option, through `session/set_config_option` (ACP v1 shape: `configOptions` with `category: "model"`, `type: "select"`). Checked against the v1 schema (see below).
 - **Extensions:** `_wildcat-code-agent/models`, `_wildcat-code-agent/settings/get` and `_wildcat-code-agent/settings/set` (see above).
-- **Prompts:** text blocks only.
+- **Prompts:** text, `resource_link` and embedded text `resource` blocks (T21). Image, audio and binary (`blob`) blocks are refused with `-32602`.
 - **`session/new`:** `mcpServers` is accepted and ignored (warning on stderr). `systemPrompt` and `additionalDirectories` are ignored. The answer carries `configOptions` and `_meta`.
 - **Tool calls:** the `title` is generated from the tool name and arguments, not the approval question (the permission request carries that). `status` is `pending` before approval.
 - **Token counts:** ACP has no place for them in the prompt result, so `promptTokens` and `completionTokens` are under `_meta.usage`. The `usage_update` `used` value is the prompt size of the last request, and `size` is `num_ctx`.

@@ -38,6 +38,7 @@ from typing import Any, TextIO
 
 import ollama
 
+from wildcat_code_agent import attachments
 from wildcat_code_agent import config as config_module
 from wildcat_code_agent import config_write, sessions
 from wildcat_code_agent.config import ConfigError, Settings
@@ -102,6 +103,8 @@ MODEL_OPTION_ID = "model"
 EXT_MODELS = "_wildcat-code-agent/models"
 EXT_SETTINGS_GET = "_wildcat-code-agent/settings/get"
 EXT_SETTINGS_SET = "_wildcat-code-agent/settings/set"
+# Agent to client (T21): the editor's diagnostics of the files attached to a prompt. Only when the client declares it.
+DIAGNOSTICS_METHOD = "_wildcat-code-agent/diagnostics"
 
 
 class TransportClosed(ValueError):
@@ -252,6 +255,10 @@ class _SessionClient:
         self.can_read = fs.get("readTextFile") is True
         self.can_write = fs.get("writeTextFile") is True
         self.can_terminal = caps.get("terminal") is True
+        # The extension's diagnostics answer (T21): declared under clientCapabilities._meta, an ACP extension point.
+        meta = caps.get("_meta") if isinstance(caps.get("_meta"), dict) else {}
+        ext = meta.get("wildcat-code-agent") if isinstance(meta.get("wildcat-code-agent"), dict) else {}
+        self.can_diagnostics = ext.get("diagnostics") is True
 
     def _call(self, method: str, params: dict, *, timeout_s: float | None = None,
               cancellable: bool = False) -> Any:
@@ -264,6 +271,11 @@ class _SessionClient:
         if not isinstance(content, str):
             raise ClientError("the editor sent no text for the file")
         return content
+
+    def diagnostics(self, uris: list[str]) -> dict[str, list[dict]]:
+        """The diagnostics of the given files, from the editor (T21). Shape: attachments.clean_diagnostics."""
+        result = self._call(DIAGNOSTICS_METHOD, {"uris": list(uris)}, cancellable=True)
+        return attachments.clean_diagnostics(result)
 
     def write_text_file(self, path: str, content: str) -> bool:
         result = self._call("fs/write_text_file", {"path": path, "content": content}, cancellable=True)
@@ -513,7 +525,7 @@ class StdioServer:
             "agentCapabilities": {
                 "loadSession": True,
                 "sessionCapabilities": {"list": {}},
-                "promptCapabilities": {"image": False, "audio": False, "embeddedContext": False},
+                "promptCapabilities": {"image": False, "audio": False, "embeddedContext": True},
             },
             "authMethods": [],
             "agentInfo": {"name": "wildcat-code-agent", "version": _agent_version()},
@@ -549,7 +561,7 @@ class StdioServer:
     def _prompt(self, request_id: Any, params: dict) -> None:
         self._require_initialized()
         session = self._session_of(params, required=True)
-        text = _prompt_text(params.get("prompt"))
+        prompt = _parse_prompt(params.get("prompt"))
         with self._lock:
             if session.busy:
                 raise ProtocolError(INVALID_REQUEST, "A prompt is already running in this session.")
@@ -557,7 +569,7 @@ class StdioServer:
             session.turn += 1
             turn = session.turn
             session.cancel.clear()
-            worker = threading.Thread(target=self._run_turn, args=(session, request_id, turn, text),
+            worker = threading.Thread(target=self._run_turn, args=(session, request_id, turn, prompt),
                                       name=f"turn-{session.session_id}-{turn}", daemon=True)
             self._workers = [w for w in self._workers if w.is_alive()] + [worker]  # finished turns are pruned
         worker.start()
@@ -645,7 +657,8 @@ class StdioServer:
         for message in session.messages:
             role = message.get("role")
             if role == "user":
-                self.notify_update(sid, {"sessionUpdate": "user_message_chunk", "content": _text(message.get("content") or ""),
+                shown = attachments.display_text(message.get("content") or "")
+                self.notify_update(sid, {"sessionUpdate": "user_message_chunk", "content": _text(shown),
                                          "messageId": uuid.uuid4().hex})
             elif role == "assistant":
                 if message.get("content"):
@@ -816,17 +829,27 @@ class StdioServer:
 
     # ----- the turn --------------------------------------------------------------------------------
 
-    def _run_turn(self, session: _Session, request_id: Any, turn: int, text: str) -> None:
+    def _run_turn(self, session: _Session, request_id: Any, turn: int, prompt: attachments.Prompt) -> None:
         events = _TurnEvents(self, session, turn)
         approver = _ProtocolApprover(self, session, turn)
         client_tools = _SessionClient(self, session, self._client_caps)
         response: dict
         warnings: list[str] = []
         try:
-            session.messages.append({"role": "user", "content": text})
-            loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
-                          approver=approver, cancel=session.cancel, session=session.approvals,
-                          client_tools=client_tools)
+            # The attached context (T21) is in the user message for this turn only. Later turns and the saved
+            # history keep the typed text and a marker listing the attachments (see attachments.history_text).
+            content = attachments.build_message(prompt, workspace=session.settings.workspace,
+                                                num_ctx=session.settings.num_ctx, client=client_tools)
+            session.messages.append({"role": "user", "content": content})
+            index = len(session.messages) - 1
+            try:
+                loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
+                              approver=approver, cancel=session.cancel, session=session.approvals,
+                              client_tools=client_tools)
+            finally:
+                if prompt.attachments:
+                    session.messages[index]["content"] = attachments.history_text(
+                        prompt, workspace=session.settings.workspace)
             warnings = self._save_session(session)  # before the answer, so a session/list that follows shows it
             outcome = events.outcome
             if isinstance(outcome, TurnDone):
@@ -930,25 +953,13 @@ class StdioServer:
                 self._log(f"Warning: cannot write to stdout ({type(e).__name__}: {e}); no more messages are sent.")
 
 
-def _prompt_text(blocks: Any) -> str:
-    """The text of a session/prompt. This agent takes text blocks only (it declares no other prompt capability)."""
-    if not isinstance(blocks, list) or not blocks:
-        raise ProtocolError(INVALID_PARAMS, "Invalid params: prompt must be a non-empty list of content blocks.")
-    parts = []
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("type") != "text" or not isinstance(block.get("text"), str):
-            kind = block.get("type") if isinstance(block, dict) else type(block).__name__
-            raise ProtocolError(INVALID_PARAMS, f"Invalid params: unsupported content block {kind!r}; "
-                                                "this agent accepts text only.")
-        parts.append(block["text"])
-    text = "\n".join(parts).strip()
-    if not text:
-        raise ProtocolError(INVALID_PARAMS, "Invalid params: the prompt is empty.")
+def _parse_prompt(blocks: Any) -> attachments.Prompt:
+    """The text and attachments of a session/prompt (T21). Text blocks, resource_link and embedded text
+    resources are accepted; anything else is -32602. Plain text prompts are unchanged."""
     try:
-        text.encode("utf-8")  # a lone surrogate (JSON "\ud800") is valid JSON but cannot be sent to Ollama
-    except UnicodeEncodeError:
-        raise ProtocolError(INVALID_PARAMS, "Invalid params: the prompt text is not valid Unicode.") from None
-    return text
+        return attachments.parse_prompt(blocks)
+    except attachments.PromptError as e:
+        raise ProtocolError(INVALID_PARAMS, str(e)) from None
 
 
 def _prompt_result(done: TurnDone, warnings: list[str] | None = None) -> dict:

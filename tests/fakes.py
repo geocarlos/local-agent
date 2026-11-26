@@ -10,6 +10,7 @@ ChatResponse chunks, `Raise(exc)` (raised at that point of the stream) or
 `Run(fn)` (called at that point, for example to set a cancel event).
 """
 
+import copy
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -137,8 +138,8 @@ class FakeOllama:
         return ollama.ShowResponse(model="fake", model_info={}, capabilities=capabilities)
 
     def chat(self, *, model, messages, tools, stream=False, options=None):
-        # Snapshot the history: the loop keeps appending to the same list.
-        self.calls.append({"model": model, "messages": list(messages), "tools": tools, "stream": stream,
+        # Snapshot the history: the loop keeps appending to the same list, and the server may edit a message after the turn.
+        self.calls.append({"model": model, "messages": copy.deepcopy(list(messages)), "tools": tools, "stream": stream,
                            "options": options})
         if len(self.calls) <= len(self.responses):
             item = self.responses[len(self.calls) - 1]

@@ -28,10 +28,14 @@ export class ClientMethodError extends Error {
   }
 }
 
-// True for the methods the host answers: fs/* and terminal/*. The agent's own requests (session/request_permission)
-// and every response or notification go to the webview.
+// The agent asks the host for the diagnostics of the files attached to a prompt (T21). Declared by the host in
+// clientCapabilities._meta, so the agent asks only when it is answered.
+export const DIAGNOSTICS_METHOD = "_wildcat-code-agent/diagnostics";
+
+// True for the methods the host answers: fs/*, terminal/* and the diagnostics method. The agent's own requests
+// (session/request_permission) and every response or notification go to the webview.
 export function isHostMethod(method: string): boolean {
-  return method.startsWith("fs/") || method.startsWith("terminal/");
+  return method.startsWith("fs/") || method.startsWith("terminal/") || method === DIAGNOSTICS_METHOD;
 }
 
 // The request, if `line` is an agent request the host answers itself; null if the line goes to the webview.
