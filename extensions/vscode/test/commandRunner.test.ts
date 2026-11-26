@@ -108,7 +108,21 @@ test("kill ends the whole process tree of a shell command, and waitForExit resol
     const started = Date.now();
     await run.waitForExit();
     assert.ok(Date.now() - started < 5_000, "waitForExit resolved within a few seconds of the kill");
-    assert.throws(() => process.kill(grandchildPid as number, 0), "the grandchild is gone");
+    // On POSIX a killed orphan can stay visible (a zombie, until its new parent reaps it) for a moment
+    // after the pipes close, so wait a little for the pid to go away instead of checking once.
+    const isAlive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const goneBy = Date.now() + 3_000;
+    while (isAlive(grandchildPid as number) && Date.now() < goneBy) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(!isAlive(grandchildPid as number), "the grandchild is gone");
   } finally {
     run.kill();
     if (grandchildPid !== undefined) {
