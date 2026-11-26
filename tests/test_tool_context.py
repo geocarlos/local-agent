@@ -82,4 +82,5 @@ def test_a_context_parameter_must_use_the_context_type_to_be_special():
 def test_builtin_module_registers_the_context_tools():
     assert builtin.read_file is TOOLS["read_file"].fn
     assert TOOLS["read_file"].takes_context and TOOLS["run_command"].takes_context
-    assert not TOOLS["write_file"].takes_context
+    # write and edit take the context too: with a client that advertised the methods (T20), they use it.
+    assert TOOLS["write_file"].takes_context and TOOLS["edit_file"].takes_context

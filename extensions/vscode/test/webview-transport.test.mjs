@@ -114,3 +114,17 @@ test("a host error with no onError is logged with console.error, and the link st
   assert.deepEqual(logged, ["Could not send to the agent: boom"]);
   assert.doesNotThrow(() => link.send("{}"));
 });
+
+test("init carries the host's client capabilities to the page; without them the page gets none", async () => {
+  const win = fakeWindow();
+  const declared = { fs: { readTextFile: true, writeTextFile: true }, terminal: true };
+  const pending = connectHostLink(fakeApi(), win);
+  win.deliver({ type: "init", cwd: "C:\work", clientCapabilities: declared });
+  const { clientCapabilities } = await pending;
+  assert.deepEqual(clientCapabilities, declared);
+
+  const bare = fakeWindow();
+  const second = connectHostLink(fakeApi(), bare);
+  bare.deliver({ type: "init", cwd: "C:\work" });
+  assert.deepEqual((await second).clientCapabilities, {});
+});

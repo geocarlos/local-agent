@@ -12,12 +12,15 @@ export class LinkError extends Error {}
 
 // The VS Code webview link (T19). The extension host starts `local-agent serve --stdio` and relays each JSON line:
 //   webview -> host: {type: "ready"} once, then {type: "send", text} for each message
-//   host -> webview: {type: "init", cwd} once the agent runs, {type: "message", text} for each line from it,
+//   host -> webview: {type: "init", cwd, clientCapabilities} once the agent runs, {type: "message", text} for each
+//                    line from it,
 //                    {type: "closed", reason} when the agent is gone (before init it is a failed connect),
 //                    {type: "error", reason} when one message could not be sent but the agent is still there
 // An error goes to link.onError(text) if the client set it (the chat shows it), else to console.error. The link
 // stays open.
-// Resolves with {link, cwd} on init. `api` is acquireVsCodeApi(); `win` is the window (its message events).
+// Resolves with {link, cwd, clientCapabilities} on init. The host declares the client capabilities it answers
+// (fs and terminal, T20); the browser link has none, so the page never claims them there.
+// `api` is acquireVsCodeApi(); `win` is the window (its message events).
 export function connectHostLink(api, win = window) {
   return new Promise((resolve, reject) => {
     let ready = false;
@@ -52,7 +55,10 @@ export function connectHostLink(api, win = window) {
       }
       if (data.type === "init" && !ready) {
         ready = true;
-        resolve({ link, cwd: String(data.cwd || "") });
+        const capabilities = data.clientCapabilities && typeof data.clientCapabilities === "object"
+          ? data.clientCapabilities
+          : {};
+        resolve({ link, cwd: String(data.cwd || ""), clientCapabilities: capabilities });
       } else if (data.type === "message" && typeof data.text === "string" && link.onMessage) {
         link.onMessage(data.text);
       } else if (data.type === "closed") {

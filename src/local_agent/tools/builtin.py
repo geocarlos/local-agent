@@ -23,12 +23,20 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from local_agent import sandbox
+from local_agent.client_tools import NOT_FOUND, ClientError, ClientTools
 from local_agent.core.events import Preview
 from local_agent.permissions import Risk
-from local_agent.tools.edit_tools import EditError, cap_preview, read_text_file, unified_diff
+from local_agent.tools.edit_tools import (
+    EditError,
+    cap_preview,
+    client_for,
+    client_write_message,
+    read_text_file,
+    unified_diff,
+)
 from local_agent.tools.output import truncate
 from local_agent.tools.process import run_process
-from local_agent.tools.registry import ToolContext, tool
+from local_agent.tools.registry import ToolCancelled, ToolContext, tool
 
 ShellName = Literal["powershell", "cmd"]
 SHELL_LABELS: dict[str, str] = {"powershell": "PowerShell", "cmd": "cmd"}
@@ -44,18 +52,43 @@ def _write_title(path: str, content: str) -> str:
     return f"Write {len(content)} chars to '{path}'"
 
 
-def _write_preview(path: str, content: str) -> Preview:
-    """A diff when the file exists and is UTF-8 text; otherwise the proposed content (a new file)."""
+def _current_for_preview(path: str, context: ToolContext) -> str | None:
+    """The file's text for the preview: the editor's when the client can read, else the disk's. None for a new
+    file (the editor says NOT_FOUND) or a file that is not UTF-8 text (the preview then shows the proposed content).
+    Any other client error is raised: the editor could not give the text, which is not the same as a new file."""
+    client = client_for(context, "read")
+    if client is not None:
+        try:
+            return client.read_text_file(path)
+        except ClientError as e:
+            if e.code == NOT_FOUND:
+                return None
+            raise
     if Path(path).is_file():
         try:
-            before = read_text_file(path)
+            return read_text_file(path)
         except EditError:
-            before = None  # not text: show the new content instead
-        if before is not None:
-            # write_file writes in text mode, so "\n" becomes os.linesep (CRLF on Windows).
-            after = content.replace("\n", os.linesep)
-            return Preview(text=unified_diff(before, after, path), path=path, kind="diff")
-    return Preview(text=cap_preview(content), path=path, kind="text")
+            return None  # not text: show the new content instead
+    return None
+
+
+def _write_preview(path: str, content: str, context: ToolContext) -> Preview:
+    """A diff when the file exists and is UTF-8 text; otherwise the proposed content (a new file)."""
+    try:
+        before = _current_for_preview(path, context)
+    except ClientError as e:  # the editor could not give the current text: say so, do not show a new file
+        note = f"Could not read the current text of '{path}' from the editor ({e}), so no diff is shown.\n\n"
+        return Preview(text=note + cap_preview(content), path=path, kind="text")
+    if before is None:
+        return Preview(text=cap_preview(content), path=path, kind="text")
+    if client_for(context, "read") is not None:
+        # The editor keeps the file's own line endings, so both texts are compared with LF.
+        return Preview(text=unified_diff(before.replace("\r\n", "\n"), content.replace("\r\n", "\n"), path),
+                       path=path, kind="diff")
+    # write_file writes in text mode, so "\n" becomes os.linesep (CRLF on Windows).
+    return Preview(text=unified_diff(before, content.replace("\n", os.linesep), path), path=path, kind="diff")
+
+
 
 
 def _shell(shell: str | None) -> str:
@@ -98,8 +131,34 @@ def _shell_precheck(command: str, shell: str | None = None) -> str | None:
     return None
 
 
+def _execute_in_client(shell: str, command: str, context: ToolContext, client: ClientTools) -> str:
+    """Run one command in the editor's terminal (T20). cmd is sent as the command line, which the client runs
+    through the platform shell; PowerShell is started directly with its arguments. The output is one stream."""
+    if shell == "cmd":
+        program, args = command, []
+    else:
+        exe = _powershell_exe()
+        if exe is None:
+            return "Error: PowerShell is not installed (neither pwsh nor powershell is on PATH). Nothing was run."
+        program, args = exe, ["-NoProfile", "-NonInteractive", "-Command", command]
+    try:
+        res = client.run_command(program, args, str(context.workspace), context.command_timeout_s)
+    except ClientError as e:
+        return f"Error running command in the editor: {e}"
+    if res.timed_out:
+        return f"Error: command timed out after {context.command_timeout_s}s and was killed."
+    exit_text = "none (no exit code)" if res.exit_code is None else str(res.exit_code)
+    note = "\n[the editor dropped the start of the output to stay within its limit]" if res.truncated else ""
+    return truncate(f"EXIT CODE: {exit_text}\nOUTPUT (stdout and stderr together):\n{res.output}{note}",
+                    context.max_output_chars)
+
+
 def _execute(shell: str, command: str, context: ToolContext) -> str:
-    """Run one command in the workspace with stdin closed and the command timeout. Returns the exit code and output."""
+    """Run one command in the workspace with stdin closed and the command timeout. Returns the exit code and output.
+    With a client that runs terminal commands (T20), the command runs in the editor's terminal instead."""
+    client = client_for(context, "terminal")
+    if client is not None:
+        return _execute_in_client(shell, command, context, client)
     argv = _shell_argv(shell, command)
     if argv is None:
         return f"Error: {SHELL_LABELS[shell]} is not installed. Nothing was run."
@@ -122,9 +181,12 @@ def read_file(
     context: ToolContext,
 ) -> str:
     """Read a text file: all of it, or only lines start_line..end_line (1-based, inclusive), numbered."""
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-    except Exception as e:
+    client = client_for(context, "read")
+    try:  # with a client, the editor's text (unsaved changes included); else the disk's
+        text = client.read_text_file(path) if client is not None else Path(path).read_text(encoding="utf-8")
+    except ToolCancelled:  # a cancel while the editor was asked: the core ends the call as cancelled
+        raise
+    except Exception as e:  # a ClientError from the editor, or an OSError from the disk
         return f"Error: {e}"
     if start_line is None and end_line is None:
         return truncate(text, context.max_output_chars)
@@ -161,8 +223,15 @@ def _allow_always(path: str, context: ToolContext, **_: object) -> bool:
     allow_always=_allow_always,
     paths=("path",),
 )
-def write_file(path: str, content: str) -> str:
+def write_file(path: str, content: str, *, context: ToolContext) -> str:
     """Create or overwrite a file with the given content."""
+    client = client_for(context, "write")
+    if client is not None:  # the change goes into the editor (see the client_tools module)
+        try:
+            saved = client.write_text_file(path, content)
+        except ClientError as e:
+            return f"Error writing {path}: {e}"
+        return client_write_message("Successfully wrote to", path, saved)
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(content, encoding="utf-8")

@@ -43,6 +43,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Annotated, Literal, Union, get_args, get_origin, get_type_hints
 
+from local_agent.client_tools import ClientTools
 from local_agent.config import DEFAULT_COMMAND_TIMEOUT_S, DEFAULT_MAX_OUTPUT_CHARS, DEFAULT_NETWORK_TIMEOUT_S
 from local_agent.core.events import TOOL_APPROVAL_OPTIONS, ApprovalRequest, Preview, ToolKind
 from local_agent.permissions import Risk
@@ -66,10 +67,12 @@ class ToolContext:
     network_timeout_s: int = DEFAULT_NETWORK_TIMEOUT_S  # web_fetch: limit for the whole fetch, and per connect or read
     cancel: threading.Event | None = None             # set when the turn is cancelled; long tools may poll it
     plugin_dir: Path | None = None                    # the plugin folder: writes into it always ask (see sandbox.py)
+    client: ClientTools | None = None                 # the editor, when the client advertised file or terminal methods (T20)
 
 
 class Location(StrEnum):
-    """Where a tool runs. CLIENT tools are executed by the frontend (T20), not the core."""
+    """Where a tool runs. CLIENT is not used by any tool: T20 routes the core's own tools through the client
+    (ToolContext.client) when the client advertises it, so every built-in tool stays CORE."""
 
     CORE = "core"
     CLIENT = "client"

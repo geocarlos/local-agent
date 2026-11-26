@@ -34,6 +34,7 @@ from typing import Any, Protocol
 import ollama
 
 from local_agent import sandbox, tools
+from local_agent.client_tools import ClientTools
 from local_agent.config import Settings, plugin_dir_of
 from local_agent.core.events import (
     ApprovalRequest,
@@ -107,6 +108,7 @@ def run_turn(
     approver: Approver | None = None,
     cancel: threading.Event | None = None,
     session: SessionApprovals | None = None,
+    client_tools: ClientTools | None = None,
 ) -> str | None:
     """Run one user turn. `messages` must already end with the user message.
 
@@ -122,6 +124,8 @@ def run_turn(
     `session` holds the "allow always for this session" answers. A frontend keeps one
     object for the whole session and passes it to every turn; without one, the
     allowances last only for this call.
+    `client_tools` is the editor's file and terminal methods, for a client that advertised them (T20).
+    The tools use them instead of the local disk and shell; approval and the sandbox are unchanged.
     """
     settings = Settings() if settings is None else settings
     if client is None:
@@ -136,7 +140,7 @@ def run_turn(
     start = len(messages)
     user_index = start - 1
     try:
-        return _run_rounds(messages, client, settings, emit, approver, cancel, usage, session)
+        return _run_rounds(messages, client, settings, emit, approver, cancel, usage, session, client_tools)
     except KeyboardInterrupt:
         # Ctrl+C outside the guarded steps (for example while an event is being printed).
         # Keep the invariant even so, then end the turn as cancelled.
@@ -161,6 +165,7 @@ def _run_rounds(
     cancel: threading.Event,
     usage: _Usage,
     session: SessionApprovals,
+    client_tools: ClientTools | None = None,
 ) -> str | None:
     tool_context = ToolContext(command_timeout_s=settings.command_timeout_s,
                                max_output_chars=settings.max_output_chars,
@@ -168,7 +173,8 @@ def _run_rounds(
                                test_command=settings.test_command,
                                network_timeout_s=settings.network_timeout_s,
                                cancel=cancel,
-                               plugin_dir=plugin_dir_of(settings))
+                               plugin_dir=plugin_dir_of(settings),
+                               client=client_tools)
     # The tools offered this turn (by the profile and the network switch). Calls to others are refused.
     offered = profiles.offered_tools(tools.TOOLS, settings)
     for round_no in range(1, settings.max_tool_rounds + 1):
