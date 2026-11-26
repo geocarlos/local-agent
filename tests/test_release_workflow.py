@@ -166,6 +166,11 @@ def test_release_attaches_the_release_files_and_marks_prereleases(wf):
     run = _run_text(publish)
     assert "--verify-tag" in run
     assert "release/*" in run
+    # No checkout in the publish job, so gh needs the repository from the environment (v0.1.0's first publish failed
+    # with "not a git repository" without it).
+    assert not any(step.get("uses", "").startswith("actions/checkout@") for step in _steps(publish))
+    create = [step for step in _steps(publish) if "gh release create" in step.get("run", "")]
+    assert create and create[0]["env"]["GH_REPO"] == "${{ github.repository }}"
     assert "--prerelease" in run
     assert "*-*" in run
     downloads = [step for step in _steps(publish) if step.get("uses", "").startswith("actions/download-artifact@")]
