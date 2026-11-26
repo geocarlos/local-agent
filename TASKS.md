@@ -97,7 +97,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - GitHub Actions builds the exe and installer on tag push and attaches them to a GitHub Release.
 - **Done when:** workflow is valid (lint/dry-run) and documented.
 
-## ☑️ M3: GUI
+## ✅ M3: GUI
 
 ### ✅ T15 Local web server: `done`
 - FastAPI + WebSocket streaming the same events as stdio.
@@ -112,7 +112,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Model picker (from Ollama), settings editor (writes the TOML config), saved session history per user.
 - **Done when:** sessions persist and reopen; settings round-trip.
 
-### T18 Desktop window: `in review`
+### ✅ T18 Desktop window: `done`
 - `local-agent gui` opens the web UI in a `pywebview` window; included in the T12 build and T13 installer.
 - **Done when:** `local-agent gui` opens a window to chat, see tool calls, and approve or deny writes.
 
