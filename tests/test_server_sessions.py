@@ -499,3 +499,46 @@ def test_the_extension_methods_need_initialize_first(tmp_path, workspace, config
         assert _call(w, "session/list", {})["error"]["code"] == INVALID_REQUEST
     finally:
         w.close()
+
+
+def test_a_save_failure_is_a_warning_in_the_prompt_answer(tmp_path, workspace, config_file):
+    w = _wire(workspace, [text_reply("answer")], _store(tmp_path), config_file)
+    try:
+        initialize(w)
+        sid = new_session(w, workspace)
+
+        def refuse(**kwargs):
+            raise sessions.SessionError("the disk is full")
+
+        w.server._store.save = refuse
+        _, messages = prompt(w, sid, "hi")
+        result = messages[-1]["result"]
+        assert result["stopReason"] == "end_turn"
+        assert any("was not saved" in text and "disk is full" in text for text in result["_meta"]["warnings"])
+    finally:
+        w.close()
+
+
+def test_a_clean_save_adds_no_warning(tmp_path, workspace, config_file):
+    w = _wire(workspace, [text_reply("answer")], _store(tmp_path), config_file)
+    try:
+        initialize(w)
+        sid = new_session(w, workspace)
+        _, messages = prompt(w, sid, "hi")
+        assert "warnings" not in messages[-1]["result"].get("_meta", {})
+    finally:
+        w.close()
+
+
+def test_a_host_change_is_logged_on_the_server(tmp_path, workspace, config_file):
+    w = _wire(workspace, [], _store(tmp_path), config_file)
+    try:
+        initialize(w)
+        response = _call(w, EXT_SETTINGS_SET, {"values": {"host": "http://127.0.0.1:9999"}})
+        assert response["result"]["values"]["host"] == "http://127.0.0.1:9999"
+        assert any("Ollama address" in line and "127.0.0.1:9999" in line for line in w.log)
+        refused = _call(w, EXT_SETTINGS_SET, {"values": {"host": "http://example.com:11434"}})
+        assert refused["error"]["code"] == INVALID_PARAMS
+        assert "by hand" in refused["error"]["message"]
+    finally:
+        w.close()

@@ -567,15 +567,19 @@ class StdioServer:
                                          "status": status,
                                          "content": [{"type": "content", "content": _text(message.get("content") or "")}]})
 
-    def _save_session(self, session: _Session) -> None:
-        """Save the session's history after a turn. A failed save is a warning: the chat goes on."""
+    def _save_session(self, session: _Session) -> list[str]:
+        """Save the session's history after a turn. A failed save does not end the chat: it is logged and
+        returned as a warning, which the prompt answer carries in _meta.warnings so the client can show it."""
         if not any(isinstance(m, dict) and m.get("role") == "user" for m in session.messages):
-            return
+            return []
         try:
             self._store.save(session_id=session.session_id, cwd=str(session.settings.workspace),
                              model=session.settings.model, created=session.created, messages=session.messages)
+            return []
         except (sessions.SessionError, OSError) as e:
+            message = f"This chat was not saved: {e}. Its later messages are not kept after a restart."
             self._log(f"Warning: session {session.session_id} was not saved: {e}")
+            return [message]
 
     # ----- models (T17) ---------------------------------------------------------------------------
 
@@ -683,11 +687,18 @@ class StdioServer:
         if not isinstance(values, dict):
             raise ProtocolError(INVALID_PARAMS, "Invalid params: values must be an object of setting names and values.")
         try:
-            config_write.write_editable(self._config_file, values)
+            before = config_write.read_editable(self._config_file)
+        except ConfigError as e:
+            raise ProtocolError(INVALID_PARAMS, str(e)) from None
+        try:
+            after = config_write.write_editable(self._config_file, values)
         except ConfigError as e:
             raise ProtocolError(INVALID_PARAMS, f"Invalid params: {e}") from None
         except OSError as e:
             raise ProtocolError(INTERNAL_ERROR, f"Cannot write the config file: {e}") from None
+        if before["host"] != after["host"]:
+            self._log(f"Note: the Ollama address in the config file changed to {after['host']}; "
+                      "it takes effect when local-agent starts again.")
         self._send(_result(request_id, self._settings_result(saved=True)))
 
     def _settings_result(self, *, saved: bool = False) -> dict:
@@ -707,16 +718,20 @@ class StdioServer:
         events = _TurnEvents(self, session, turn)
         approver = _ProtocolApprover(self, session, turn)
         response: dict
+        warnings: list[str] = []
         try:
             session.messages.append({"role": "user", "content": text})
             loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
                           approver=approver, cancel=session.cancel, session=session.approvals)
-            self._save_session(session)  # before the answer, so a session/list that follows shows it
+            warnings = self._save_session(session)  # before the answer, so a session/list that follows shows it
             outcome = events.outcome
             if isinstance(outcome, TurnDone):
-                response = _result(request_id, _prompt_result(outcome))
+                response = _result(request_id, _prompt_result(outcome, warnings))
             elif isinstance(outcome, Error):
-                response = _error(request_id, INTERNAL_ERROR, outcome.message, {"kind": "agent"})
+                data: dict[str, Any] = {"kind": "agent"}
+                if warnings:
+                    data["warnings"] = warnings
+                response = _error(request_id, INTERNAL_ERROR, outcome.message, data)
             else:
                 response = _error(request_id, INTERNAL_ERROR, "The turn ended without a result.")
         except Exception as e:
@@ -795,11 +810,15 @@ def _prompt_text(blocks: Any) -> str:
     return text
 
 
-def _prompt_result(done: TurnDone) -> dict:
+def _prompt_result(done: TurnDone, warnings: list[str] | None = None) -> dict:
     result: dict[str, Any] = {"stopReason": done.stop_reason}
+    meta: dict[str, Any] = {}
     if done.usage is not None:  # ACP has no token counts in the prompt result, so they go under _meta
-        result["_meta"] = {"usage": {"promptTokens": done.usage.prompt_tokens,
-                                     "completionTokens": done.usage.completion_tokens}}
+        meta["usage"] = {"promptTokens": done.usage.prompt_tokens, "completionTokens": done.usage.completion_tokens}
+    if warnings:  # e.g. the chat could not be saved; the client shows them to the user
+        meta["warnings"] = list(warnings)
+    if meta:
+        result["_meta"] = meta
     return result
 
 

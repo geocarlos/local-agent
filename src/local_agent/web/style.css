@@ -100,6 +100,7 @@ h1, h2 { margin: 0; font-size: 1.1rem; }
 .msg { padding: 0.6rem 0.8rem; border-radius: 8px; background: var(--panel); border: 1px solid var(--border); }
 .msg.user { background: var(--code-bg); }
 .msg.system { color: var(--muted); font-size: 0.9rem; padding: 0.2rem 0.4rem; background: none; border: none; }
+.msg.warning { background: var(--panel); color: var(--warn-text); border-color: var(--warn-text); }
 .msg.error { background: var(--error-bg); color: var(--error-text); border-color: transparent; }
 .msg .label { display: block; color: var(--muted); font-size: 0.8rem; margin-bottom: 0.2rem; }
 .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }

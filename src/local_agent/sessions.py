@@ -133,20 +133,24 @@ class SessionStore:
 
     def load(self, session_id: str) -> SessionRecord:
         path = self._path(session_id)
-        if not path.is_file():
-            raise SessionError("no saved session with that id")
-        return _parse(path, session_id)
+        with self._lock:  # not while a save is replacing the file
+            if not path.is_file():
+                raise SessionError("no saved session with that id")
+            return _parse(path, session_id)
 
     def list_sessions(self) -> list[SessionSummary]:
         """Every readable session, most recently updated first. Unreadable files are skipped with a warning."""
         summaries: list[SessionSummary] = []
-        for path in self._files():
-            try:
-                record = _parse(path, path.stem)
-            except SessionError as e:
-                self._log(f"Warning: skipped a saved session that cannot be read: {path.name} ({e})")
-                continue
-            summaries.append(SessionSummary(record.session_id, record.cwd, record.model, record.title, record.updated))
+        with self._lock:
+            files = self._files()
+            for path in files:
+                try:
+                    record = _parse(path, path.stem)
+                except SessionError as e:
+                    self._log(f"Warning: skipped a saved session that cannot be read: {path.name} ({e})")
+                    continue
+                summaries.append(SessionSummary(record.session_id, record.cwd, record.model, record.title,
+                                                record.updated))
         summaries.sort(key=lambda s: s.updated, reverse=True)
         return summaries
 
@@ -193,5 +197,13 @@ def _parse(path: Path, expected_id: str) -> SessionRecord:
             isinstance(m, dict) and m.get("role") in ROLES and isinstance(m.get("content", ""), str)
             for m in messages):
         raise SessionError("the messages are not a valid history")
+    for message in messages:  # replay reads these fields, so a malformed call is refused here, not on load
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+                raise SessionError("a tool call in the history has no function name")
+            arguments = function.get("arguments", {})
+            if arguments is not None and not isinstance(arguments, dict):
+                raise SessionError("a tool call in the history has bad arguments")
     return SessionRecord(session_id=session_id, cwd=cwd, model=model, title=title, created=created,
                          updated=updated, messages=messages)

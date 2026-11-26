@@ -187,7 +187,8 @@ The settings editor reads and writes the per-user `config.toml`, or the `--confi
 - `values` are the file's values with the defaults filled in. A missing file gives the defaults and `exists: false`. A file the agent cannot load is `-32602`, with the reason.
 - `_local-agent/settings/set` takes `{"values": {...}}` with any subset of the editable keys. It checks each value with the same rules as the file and the flags, then writes the file atomically (a temp file, checked as a whole, then renamed over it). The response is the `get` answer with `"saved": true`. The folder is created if needed.
 - **Allowlist (decided).** Only `model`, `host`, `num_ctx`, `max_tool_rounds`, `max_output_chars`, `command_timeout_s`, `network_timeout_s` and `tool_profile` can be set. Any other key is `-32602` and nothing is written. Kept out on purpose: `network_enabled` (turns on the network tool), `workspace` (the default folder for the file tools), `plugin_dir`, `plugins_enabled`, `disabled_plugins` (plugins are Python files that run in the process), `mcp_servers` and `test_command` (they name programs that are started). Those are edited by hand.
-- Comments and keys this version does not know are kept (tomlkit).
+- Comments and the layout of the file are kept (tomlkit). A key this version does not know is refused when the file is loaded, so the editor never writes one. Integer limits: `num_ctx` up to 1048576, `max_output_chars` up to 1000000, `max_tool_rounds` up to 200, `command_timeout_s` and `network_timeout_s` up to 3600; every integer is at most 2**63 - 1. The same limits hold for the file and the flags.
+- **Ollama address (decided).** The editor accepts `host` only when it is loopback (`127.0.0.1`, `localhost` or `::1`, any port). Another host is `-32602` with a message that says to edit `config.toml` by hand. A change of `host` is logged on stderr (it takes effect at the next start).
 - **Applies on restart (decided).** The server reads the file when it starts. A running server keeps its settings; a chat's model changes at any time with `session/set_config_option`. `applies` says `restart`.
 
 ## Saved sessions
@@ -201,7 +202,7 @@ Each session is saved after each turn, to one JSON file in the per-user data fol
 - Writes are atomic: the JSON goes to a temp file beside the target, is flushed, and is renamed over it. A crash leaves the old file or the new one.
 - A file that cannot be parsed, has another `format`, or whose `id` does not match its name is skipped by `session/list` (a warning on stderr) and refused by `session/load`. One bad file does not hide the others.
 - The title is the first user message, whitespace collapsed and cut to 80 characters.
-- **Limits (decided):** a session file over 5 MiB is not saved (a warning on stderr; the chat goes on). At most 200 session files are kept: after a save, the least recently updated files beyond 200 are deleted, with a warning that says how many. A session id from a client must match `sess-` plus 32 lowercase hex digits before any path is built.
+- **Limits (decided):** a session file over 5 MiB is not saved. A failed save (too large, or the disk refuses) is logged on stderr and reported to the user: the `session/prompt` answer carries `_meta.warnings` (a list of text), and the chat window shows them. The chat goes on, but its later messages are lost after a restart. At most 200 session files are kept: after a save, the least recently updated files beyond 200 are deleted, with a warning that says how many. Corrupt files count toward the 200 (they are not separated out). A session id from a client must match `sess-` plus 32 lowercase hex digits before any path is built.
 - The reasoning text is not saved. "Allow always" answers are not saved.
 - The CLI (`local-agent chat`) does not save sessions. Only the server does.
 
@@ -218,6 +219,7 @@ The server streams `session/update` notifications while the turn runs (see below
 {"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","_meta":{"usage":{"promptTokens":1921,"completionTokens":561}}}}
 ```
 
+- `_meta.warnings` (optional) is a list of text, for example that the chat could not be saved. A failed turn's error carries the same list in `data.warnings`.
 - `stopReason` is `end_turn` (the model finished), `cancelled` (the client sent `session/cancel`, or the server was shut down), or `max_turn_requests` (the tool round cap of `max_tool_rounds` was reached). `max_tokens` and `refusal` are not produced.
 - `_meta.usage` is an extension (ACP has no token counts in the prompt result): `promptTokens` is the prompt size of the last model request, and `completionTokens` the tokens generated over all rounds. It is absent when Ollama reported no counts.
 - Only one prompt runs per session. A second `session/prompt` to a session that is busy gets `-32600` at once; the running turn is not affected.

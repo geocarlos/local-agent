@@ -215,8 +215,18 @@ export class ChatView {
     this.addSystem(STOP_LABELS[reason] || `Turn ended (${reason}).`);
     const tokens = result && result._meta && result._meta.usage;
     this.lastTurnTokens = tokens ? tokens.completionTokens : null;
+    this.addWarnings(result && result._meta && result._meta.warnings);
     this._renderUsage();
     this.setBusy(false);
+  }
+
+  // Warnings the agent sends with an answer (for example, the chat could not be saved). Shown as text.
+  addWarnings(warnings) {
+    for (const text of Array.isArray(warnings) ? warnings : []) {
+      const node = el("div", "msg warning");
+      node.append(el("span", "label", "Warning"), el("div", "text", String(text)));
+      this._append(node);
+    }
   }
 
   // After a disconnect the disconnect notice already says what happened, so there is no second message.
@@ -225,6 +235,7 @@ export class ChatView {
       return;
     }
     this.addError(error && error.message ? error.message : String(error));
+    this.addWarnings(error && error.data && error.data.warnings);
     this.setBusy(false);
   }
 

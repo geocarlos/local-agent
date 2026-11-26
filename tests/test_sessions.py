@@ -186,3 +186,63 @@ def test_without_the_override_the_folder_is_the_per_user_data_folder(monkeypatch
     folder = sessions.sessions_folder()
     assert folder.name == "sessions"
     assert folder.parent.name == "local-agent"
+
+
+def test_a_write_waits_while_another_handle_holds_the_target_open(tmp_path):
+    """Windows refuses the rename while a reader has the file open; the write retries until it can replace it."""
+    import threading
+    import time
+
+    target = tmp_path / "file.json"
+    target.write_text("old", encoding="utf-8")
+    release = threading.Event()
+    opened = threading.Event()
+
+    def hold_open() -> None:
+        with open(target, encoding="utf-8") as handle:  # a reader keeps the file open
+            opened.set()
+            release.wait(5)
+
+    reader = threading.Thread(target=hold_open)
+    reader.start()
+    opened.wait(5)
+    timer = threading.Timer(0.1, release.set)
+    timer.start()
+    try:
+        atomic.atomic_write_text(target, "new")
+    finally:
+        timer.cancel()
+        release.set()
+        reader.join(5)
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_a_target_that_stays_locked_raises_after_the_retries(tmp_path, monkeypatch):
+    target = tmp_path / "file.json"
+    target.write_text("old", encoding="utf-8")
+    monkeypatch.setattr(atomic.time, "sleep", lambda seconds: None)
+
+    def locked(source, destination):
+        raise PermissionError(13, "locked")
+
+    monkeypatch.setattr(atomic.os, "replace", locked)
+    with pytest.raises(PermissionError):
+        atomic.atomic_write_text(target, "new")
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+@pytest.mark.parametrize("calls", [
+    [{"function": {"arguments": {}}}],                     # no name
+    [{"function": {"name": 3, "arguments": {}}}],          # name not text
+    ["read_file"],                                         # not an object
+    [{"function": {"name": "x", "arguments": "oops"}}],    # arguments not an object
+])
+def test_a_malformed_tool_call_in_the_history_is_refused(store, calls):
+    messages = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "", "tool_calls": calls}]
+    store.folder.mkdir(parents=True, exist_ok=True)
+    data = {"format": 1, "id": SID, "cwd": "C:/work", "model": "m", "title": None, "created": "t",
+            "updated": "t", "messages": messages}
+    (store.folder / f"{SID}.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(SessionError):
+        store.load(SID)
+    assert store.list_sessions() == []

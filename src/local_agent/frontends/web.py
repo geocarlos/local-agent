@@ -274,9 +274,9 @@ def serve_web(settings: Settings, *, port: int = 0, client: Any = None, errors: 
         store = sessions.SessionStore(sessions.sessions_folder(), log=log)
     app = create_app(settings, token=token, port=bound_port, client=client, log=log, threads=threads,
                      store=store, config_file=config_file)
-    config = uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES, access_log=False,
-                            log_level="warning", lifespan="off")
-    uv_server = uvicorn.Server(config)
+    uv_config = uvicorn.Config(app, ws="websockets-sansio", ws_max_size=WS_MAX_MESSAGE_BYTES, access_log=False,
+                               log_level="warning", lifespan="off")
+    uv_server = uvicorn.Server(uv_config)
     try:
         with contextlib.redirect_stdout(errors), acp.running_agent(settings, client=client, log=log):
             try:

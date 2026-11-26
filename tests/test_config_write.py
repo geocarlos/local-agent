@@ -102,3 +102,49 @@ def test_host_is_stored_normalised_like_the_flag(tmp_path):
     path = tmp_path / "config.toml"
     values = config_write.write_editable(path, {"host": "127.0.0.1:11434/"})
     assert values["host"] == "http://127.0.0.1:11434"
+
+
+@pytest.mark.parametrize("key,value", [
+    ("num_ctx", 2**63),                  # beyond 64 bits
+    ("num_ctx", 1_048_577),              # over the editor maximum
+    ("max_output_chars", 10**12),
+    ("max_tool_rounds", 201),
+    ("command_timeout_s", 3601),
+    ("network_timeout_s", 3601),
+])
+def test_numbers_above_their_maximum_are_refused(tmp_path, key, value):
+    path = tmp_path / "config.toml"
+    with pytest.raises(ConfigError, match="at most"):
+        config_write.write_editable(path, {key: value})
+    assert not path.exists()
+
+
+def test_the_maximums_are_also_enforced_when_the_file_is_read(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("num_ctx = 9223372036854775808\n", encoding="utf-8")  # 2**63
+    with pytest.raises(ConfigError):
+        config.load_settings(config_file=path, env={})
+
+
+@pytest.mark.parametrize("host", [
+    "http://example.com:11434",
+    "http://192.168.1.20:11434",
+    "https://ollama.internal",
+    "http://0.0.0.0:11434",
+])
+def test_a_host_that_is_not_loopback_is_refused_with_the_hand_edit_hint(tmp_path, host):
+    path = tmp_path / "config.toml"
+    with pytest.raises(ConfigError, match="edit host in config.toml by hand"):
+        config_write.write_editable(path, {"host": host})
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("host,stored", [
+    ("http://127.0.0.1:11434", "http://127.0.0.1:11434"),
+    ("localhost:11434", "http://localhost:11434"),
+    ("http://[::1]:11434", "http://[::1]:11434"),
+    ("http://127.0.0.1:9", "http://127.0.0.1:9"),
+])
+def test_a_loopback_host_is_accepted(tmp_path, host, stored):
+    values = config_write.write_editable(tmp_path / "config.toml", {"host": host})
+    assert values["host"] == stored
