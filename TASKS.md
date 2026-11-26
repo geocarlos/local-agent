@@ -123,7 +123,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - TypeScript extension in `extensions/vscode/`; spawns `local-agent serve --stdio`; webview panel reuses the T16 bundle.
 - **Done when:** you can chat in a VS Code panel and approve a core-side write.
 
-### T20 Client-side tools: `in review`
+### ✅ T20 Client-side tools: `done`
 - Tools that run in the extension: read unsaved buffers, apply edits as a `WorkspaceEdit` with diff preview (undo works), run commands in an integrated terminal.
 - **Done when:** an edit is approved as a diff and undone with Ctrl+Z.
 
