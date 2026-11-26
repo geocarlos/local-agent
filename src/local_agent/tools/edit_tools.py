@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Annotated
 
 from local_agent import sandbox
+from local_agent.client_tools import NOT_FOUND, ClientError, ClientTools
 from local_agent.core.events import Preview
 from local_agent.permissions import Risk
 from local_agent.tools.registry import ToolContext, tool
@@ -59,6 +60,15 @@ def unified_diff(before: str, after: str, path: str) -> str:
     )
     out = [line if line.endswith("\n") else f"{line}\n{NO_NEWLINE_MARK}\n" for line in diff]
     return cap_preview("".join(out)) or "(no changes)"
+
+
+def client_write_message(done: str, path: str, saved: bool) -> str:
+    """The result of a write made through the client, e.g. done="Successfully edited". A change the client did
+    not save is said so, because the model would otherwise run the next command against the old file on disk."""
+    if saved:
+        return f"{done} {path}."
+    return (f"{done} {path} in the editor. The change is not saved to disk yet: the file has unsaved changes "
+            "in the editor, and the user must save it.")
 
 
 class EditError(Exception):
@@ -131,14 +141,42 @@ def _not_found(path: str, body: str, old: str) -> str:
     return message + " No change was made."
 
 
-def plan_edit(path: str, old_text: str, new_text: str) -> EditPlan:
-    """The edit as a plan. Raises EditError with the reason when it cannot apply exactly once."""
+def current_text(path: str, context: ToolContext) -> str:
+    """The file's text as the edit sees it: the editor's (unsaved changes included) when the client can read,
+    else the disk's. Raises EditError with the reason when it cannot be read as UTF-8 text."""
+    client = client_for(context, "read")
+    if client is None:
+        return read_text_file(path)
+    try:
+        text = client.read_text_file(path)
+    except ClientError as e:
+        if e.code == NOT_FOUND:
+            raise EditError(f"Error: no such file: '{path}'. edit_file changes an existing file; "
+                            "use write_file to create one.") from None
+        raise EditError(f"Error: cannot read '{path}' in the editor: {e}") from None
+    if "\x00" in text:
+        raise EditError(f"Error: '{path}' looks binary (it contains NUL bytes). Only UTF-8 text files can be edited.")
+    return text
+
+
+def client_for(context: ToolContext | None, feature: str) -> ClientTools | None:
+    """The client, if it advertised `feature` ("read", "write" or "terminal") for this call; else None (local)."""
+    client = context.client if context is not None else None
+    if client is None or not getattr(client, f"can_{feature}", False):
+        return None
+    return client
+
+
+def plan_edit(path: str, old_text: str, new_text: str, text: str | None = None) -> EditPlan:
+    """The edit as a plan. Raises EditError with the reason when it cannot apply exactly once.
+    `text` is the file's current text; when None it is read from the disk."""
     if old_text == "":
         raise EditError("Error: old_text is empty. Give the exact text to replace. "
                         "To write a whole file, use write_file.")
     if old_text == new_text:
         raise EditError("Error: old_text and new_text are the same, so the edit would change nothing.")
-    text = read_text_file(path)
+    if text is None:
+        text = read_text_file(path)
     body, old, new, restore = _line_ending_form(text, old_text, new_text)
     found = _occurrences(body, old)
     if not found:
@@ -162,17 +200,22 @@ def _edit_title(path: str, old_text: str, new_text: str) -> str:
     return f"Edit '{path}' (replace one occurrence)"
 
 
-def _edit_preview(path: str, old_text: str, new_text: str) -> Preview:
+def _edit_plan(path: str, old_text: str, new_text: str, context: ToolContext) -> EditPlan:
+    """The plan against the file's current text (see current_text). Raises EditError."""
+    return plan_edit(path, old_text, new_text, text=current_text(path, context))
+
+
+def _edit_preview(path: str, old_text: str, new_text: str, context: ToolContext) -> Preview:
     try:
-        plan = plan_edit(path, old_text, new_text)
+        plan = _edit_plan(path, old_text, new_text, context)
     except EditError as e:  # the precheck ran first, so this only happens if the file changed since
         return Preview(text=str(e), path=path, kind="text")
     return Preview(text=unified_diff(plan.before, plan.after, path), path=path, kind="diff")
 
 
-def _edit_precheck(path: str, old_text: str, new_text: str) -> str | None:
+def _edit_precheck(path: str, old_text: str, new_text: str, context: ToolContext) -> str | None:
     try:
-        plan_edit(path, old_text, new_text)
+        _edit_plan(path, old_text, new_text, context)
     except EditError as e:
         return str(e)
     return None
@@ -196,13 +239,22 @@ def edit_file(
     path: str,
     old_text: Annotated[str, "Exact text to replace; it must occur exactly once in the file."],
     new_text: Annotated[str, "Text that replaces old_text. An empty string deletes old_text."],
+    *,
+    context: ToolContext,
 ) -> str:
     """Replace one exact occurrence of old_text in an existing text file. Include enough surrounding lines
     to make old_text unique; if it is missing or occurs more than once, nothing changes."""
     try:
-        plan = plan_edit(path, old_text, new_text)
+        plan = _edit_plan(path, old_text, new_text, context)
     except EditError as e:
         return str(e)
+    client = client_for(context, "write")
+    if client is not None:
+        try:
+            saved = client.write_text_file(path, plan.after)
+        except ClientError as e:
+            return f"Error writing {path}: {e}"
+        return client_write_message("Successfully edited", path, saved)
     try:
         Path(path).write_bytes(plan.after.encode("utf-8"))
     except (OSError, UnicodeEncodeError) as e:

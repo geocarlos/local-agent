@@ -54,9 +54,11 @@ from local_agent.core.events import (
     ToolStarted,
     TurnDone,
 )
+from local_agent.client_tools import ClientError, CommandResult
 from local_agent.core.model import OLLAMA_ERRORS, describe_error, probe
 from local_agent.permissions import SessionApprovals
 from local_agent.tools import TOOLS, mcp_tools, plugins
+from local_agent.tools.registry import ToolCancelled
 
 PROTOCOL_VERSION = 1
 JSONRPC = "2.0"
@@ -78,6 +80,9 @@ PERMISSION_LABELS = {
 
 # How long the main loop waits for a permission answer before it checks for a cancel.
 _POLL_S = 0.05
+# How long the client has to answer a fs/* or terminal/* request (T20). A command's own wait uses the command timeout.
+CLIENT_FILE_TIMEOUT_S = 30.0
+CLIENT_CLEANUP_TIMEOUT_S = 5.0  # for terminal/output, terminal/kill and terminal/release
 # One deadline, shared by all running turns, for shutdown to wait for them after their cancel is set.
 SHUTDOWN_DEADLINE_S = 10.0
 PROBE_JOIN_S = 5.0  # at shutdown, how long to wait for the startup model check to report
@@ -175,10 +180,12 @@ class _Session:
 
 @dataclass
 class _Pending:
-    """A session/request_permission waiting for the client's answer."""
+    """A request to the client waiting for its answer: session/request_permission, or a fs/* or terminal/* call."""
 
     event: threading.Event = field(default_factory=threading.Event)
     answer: str | None = None              # the selected optionId, or None for cancelled or unusable
+    result: Any = None                     # the result of a fs/* or terminal/* call
+    error: dict | None = None              # the error of a fs/* or terminal/* call
 
 
 class _TurnEvents:
@@ -230,6 +237,88 @@ class _TurnEvents:
             self._server.notify_update(sid, update)
 
 
+class _SessionClient:
+    """The client's file and terminal methods for one session's turns (T20). It implements client_tools.ClientTools.
+
+    A flag is True only when the client advertised that capability in initialize. The tools check the path
+    against the sandbox before they call in here, so nothing reaches the client that the core would refuse.
+    """
+
+    def __init__(self, server: "StdioServer", session: _Session, caps: dict) -> None:
+        fs = caps.get("fs") if isinstance(caps.get("fs"), dict) else {}
+        self._server = server
+        self._session = session
+        self.can_read = fs.get("readTextFile") is True
+        self.can_write = fs.get("writeTextFile") is True
+        self.can_terminal = caps.get("terminal") is True
+
+    def _call(self, method: str, params: dict, *, timeout_s: float | None = None,
+              cancellable: bool = False) -> Any:
+        limit = CLIENT_FILE_TIMEOUT_S if timeout_s is None else timeout_s  # read at call time, so a test can shorten it
+        return self._server.call_client(self._session, method, params, timeout_s=limit, cancellable=cancellable)
+
+    def read_text_file(self, path: str) -> str:
+        result = self._call("fs/read_text_file", {"path": path}, cancellable=True)
+        content = result.get("content") if isinstance(result, dict) else None
+        if not isinstance(content, str):
+            raise ClientError("the editor sent no text for the file")
+        return content
+
+    def write_text_file(self, path: str, content: str) -> bool:
+        result = self._call("fs/write_text_file", {"path": path, "content": content}, cancellable=True)
+        meta = result.get("_meta") if isinstance(result, dict) else None
+        return not (isinstance(meta, dict) and meta.get("saved") is False)  # the editor says when it did not save
+
+    def run_command(self, command: str, args: list[str], cwd: str, timeout_s: float) -> CommandResult:
+        created = self._call("terminal/create", {"command": command, "args": list(args), "cwd": cwd})
+        terminal_id = created.get("terminalId") if isinstance(created, dict) else None
+        if not isinstance(terminal_id, str):
+            raise ClientError("the editor did not return a terminal id")
+        try:
+            return self._collect(terminal_id, timeout_s)
+        finally:
+            self._cleanup("terminal/release", terminal_id)
+
+    def _collect(self, terminal_id: str, timeout_s: float) -> CommandResult:
+        exit_code: int | None = None
+        timed_out = False
+        try:
+            waited = self._call("terminal/wait_for_exit", {"terminalId": terminal_id}, timeout_s=timeout_s,
+                                cancellable=True)
+            exit_code = _exit_code(waited)
+        except ClientError as e:
+            if not e.timed_out:
+                raise
+            timed_out = True
+        except ToolCancelled:
+            self._cleanup("terminal/kill", terminal_id)  # a cancelled command is ended, not left running
+            raise
+        if timed_out:
+            self._cleanup("terminal/kill", terminal_id)
+        try:
+            out = self._call("terminal/output", {"terminalId": terminal_id}, timeout_s=CLIENT_CLEANUP_TIMEOUT_S)
+        except ClientError:
+            out = {}  # output the editor cannot report is empty; the run itself still has its result
+        if not isinstance(out, dict):
+            out = {}
+        if exit_code is None:
+            exit_code = _exit_code(out.get("exitStatus"))
+        text = out.get("output") if isinstance(out.get("output"), str) else ""
+        return CommandResult(exit_code=exit_code, output=text, truncated=out.get("truncated") is True,
+                             timed_out=timed_out)
+
+    def _cleanup(self, method: str, terminal_id: str) -> None:
+        try:
+            self._call(method, {"terminalId": terminal_id}, timeout_s=CLIENT_CLEANUP_TIMEOUT_S)
+        except ClientError:
+            pass  # the editor may have ended the terminal already; there is nothing more to do
+
+
+def _exit_code(value: Any) -> int | None:
+    code = value.get("exitCode") if isinstance(value, dict) else None
+    return code if isinstance(code, int) and not isinstance(code, bool) else None
+
+
 class _ProtocolApprover:
     """Asks the client with session/request_permission and waits for its answer (or for a cancel)."""
 
@@ -271,6 +360,8 @@ class StdioServer:
         self._lock = threading.Lock()  # guards sessions, pending requests, the initialized flag and busy flags
         self._sessions: dict[str, _Session] = {}
         self._pending: dict[str, _Pending] = {}
+        self._abandoned: set[str] = set()  # client requests that gave up: their late answers are dropped
+        self._client_caps: dict = {}       # the client's clientCapabilities from initialize (T20)
         self._initialized = False
         self._request_count = 0
         self._workers: list[threading.Thread] = []
@@ -381,6 +472,9 @@ class StdioServer:
             self._log(f"Warning: ignored a response with an id that is not a string: {json.dumps(response_id)[:80]}")
             return
         with self._lock:
+            if response_id in self._abandoned:  # a client call that already gave up: its late answer is dropped
+                self._abandoned.discard(response_id)
+                return
             pending = self._pending.get(response_id)
         if pending is None:
             self._log(f"Warning: ignored a response with an unknown id {message['id']!r}.")
@@ -391,6 +485,8 @@ class StdioServer:
         if isinstance(outcome, dict) and outcome.get("outcome") == "selected" and isinstance(outcome.get("optionId"), str):
             answer = outcome["optionId"]
         pending.answer = answer
+        pending.result = result
+        pending.error = message.get("error") if isinstance(message.get("error"), dict) else None
         pending.event.set()
 
     # ----- requests --------------------------------------------------------------------------------
@@ -404,8 +500,10 @@ class StdioServer:
         if not isinstance(requested, int) or isinstance(requested, bool):
             raise ProtocolError(INVALID_PARAMS, "Invalid params: protocolVersion must be an integer.")
         # The agent answers with the one version it speaks; the client decides whether to continue.
+        caps = params.get("clientCapabilities")
         with self._lock:
             self._initialized = True
+            self._client_caps = caps if isinstance(caps, dict) else {}
         self._send(_result(request_id, {
             "protocolVersion": PROTOCOL_VERSION,
             "agentCapabilities": {
@@ -717,12 +815,14 @@ class StdioServer:
     def _run_turn(self, session: _Session, request_id: Any, turn: int, text: str) -> None:
         events = _TurnEvents(self, session, turn)
         approver = _ProtocolApprover(self, session, turn)
+        client_tools = _SessionClient(self, session, self._client_caps)
         response: dict
         warnings: list[str] = []
         try:
             session.messages.append({"role": "user", "content": text})
             loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
-                          approver=approver, cancel=session.cancel, session=session.approvals)
+                          approver=approver, cancel=session.cancel, session=session.approvals,
+                          client_tools=client_tools)
             warnings = self._save_session(session)  # before the answer, so a session/list that follows shows it
             outcome = events.outcome
             if isinstance(outcome, TurnDone):
@@ -767,6 +867,41 @@ class StdioServer:
     def finish_permission_request(self, request_id: str) -> None:
         with self._lock:
             self._pending.pop(request_id, None)
+
+    def call_client(self, session: _Session, method: str, params: dict, *, timeout_s: float,
+                    cancellable: bool = False) -> Any:
+        """Send a request to the client (fs/* or terminal/*, T20) and wait for its answer; returns the result.
+
+        Raises ClientError for an error answer, and for no answer within timeout_s (timed_out=True). With
+        `cancellable`, a cancel of the session while waiting raises ToolCancelled. A request that gave up is
+        remembered in _abandoned, so its answer, if it still comes, is dropped without a warning.
+        """
+        with self._lock:
+            self._request_count += 1
+            request_id = f"srv-{self._request_count}"
+            pending = _Pending()
+            self._pending[request_id] = pending
+        self._send(_request(request_id, method, {"sessionId": session.session_id, **params}))
+        deadline = time.monotonic() + timeout_s
+        answered = False
+        try:
+            while not pending.event.wait(_POLL_S):
+                if cancellable and session.cancel.is_set():
+                    raise ToolCancelled()
+                if time.monotonic() >= deadline:
+                    raise ClientError(f"the editor did not answer {method} within {timeout_s:g} s", timed_out=True)
+            answered = True
+        finally:
+            with self._lock:
+                self._pending.pop(request_id, None)
+                if not answered:
+                    self._abandoned.add(request_id)
+        if pending.error is not None:
+            code = pending.error.get("code")
+            message = pending.error.get("message")
+            raise ClientError(str(message) if message else "the editor reported an error",
+                              code=code if isinstance(code, int) and not isinstance(code, bool) else None)
+        return pending.result
 
     # ----- writing ---------------------------------------------------------------------------------
 

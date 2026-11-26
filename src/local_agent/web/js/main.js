@@ -37,7 +37,8 @@ async function fetchInfo(token) {
   return response.json();
 }
 
-// The browser (and pywebview) link: the T15 WebSocket, with the token. Resolves with {link, cwd}.
+// The browser (and pywebview) link: the T15 WebSocket, with the token. Resolves with {link, cwd}: no client
+// capabilities, so the agent keeps its own file and shell tools (T20 advertises them only from the VS Code host).
 async function openBrowserLink(token) {
   const info = await fetchInfo(token);
   if (info.protocolVersion !== PROTOCOL_VERSION) {
@@ -85,9 +86,9 @@ class App {
     this.settingsOpen.disabled = this.dead || !this.sessionId;
   }
 
-  // `open` returns {link, cwd}: openBrowserLink (browser, pywebview) or connectHostLink (VS Code webview).
+  // `open` returns {link, cwd, clientCapabilities}: openBrowserLink (browser, pywebview) or connectHostLink (VS Code).
   async connect(open) {
-    const { link, cwd } = await open();
+    const { link, cwd, clientCapabilities } = await open();
     // A host-side send error (the link stays open) is shown in the chat, the same way a failed turn is.
     link.onError = (text) => this.view.addError(text);
     this.client = new AcpClient(link);
@@ -98,7 +99,10 @@ class App {
       this.view.disconnected(reason);
       this.lock(true);
     };
-    const init = await this.client.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    const init = await this.client.request("initialize", {
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: clientCapabilities || {},
+    });
     if (init.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error(`The agent answered protocol ${init.protocolVersion}; this page needs ${PROTOCOL_VERSION}.`);
     }

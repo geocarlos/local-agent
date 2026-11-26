@@ -1,12 +1,16 @@
 // The VS Code side: a command that opens a webview panel. The panel shows the T16 web bundle (copied to webview/
 // at build time). The extension host starts `local-agent serve --stdio` and relays its JSON lines to and from the
-// webview; the bundle's AcpClient does the JSON-RPC, approvals included. See README "VS Code extension".
+// webview; the bundle's AcpClient does the JSON-RPC, approvals included. The host also answers the agent's fs/* and
+// terminal/* requests itself (T20, editorTools.ts), so the agent's file reads, writes and commands go to the editor.
+// See README "VS Code extension".
 
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { parseWebviewMessage, HostToWebview } from "./messages";
+import { answerClientRequest, clientRequestOf, ClientRequest } from "./clientRouter";
+import { CLIENT_CAPABILITIES, parseWebviewMessage, HostToWebview } from "./messages";
+import { EditorTools } from "./editorTools";
 import { GuardedSender } from "./guardedSender";
 import { AgentProcess, serveArgv } from "./stdioAgent";
 import { nonceFrom, renderWebviewPage } from "./webviewHtml";
@@ -15,6 +19,7 @@ const VIEW_TYPE = "localAgent.chat";
 
 let panel: vscode.WebviewPanel | undefined;
 let agent: AgentProcess | undefined;
+let editorTools: EditorTools | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("local-agent");
@@ -27,6 +32,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   stopAgent();
+  editorTools?.dispose();
+  editorTools = undefined;
 }
 
 function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
@@ -47,6 +54,8 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
   });
   panel = current;
   current.webview.html = pageHtml(context, current.webview, bundle);
+  const tools = new EditorTools();
+  editorTools = tools;
 
   // Every message to the webview goes through here; after dispose it is dropped (see guardedSender.ts).
   const post = new GuardedSender<HostToWebview>((message) => {
@@ -58,8 +67,15 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
     }
     stopAgent();
     const command = vscode.workspace.getConfiguration("localAgent").get<string[]>("command", ["local-agent"]);
-    const relay = new AgentProcess({
-      onMessage: (text) => post.send({ type: "message", text }),
+    const relay: AgentProcess = new AgentProcess({
+      onMessage: (text) => {
+        const request = clientRequestOf(text);
+        if (request) {
+          void answerAgentRequest(request, relay, tools); // the agent's file or terminal request: the host answers
+          return;
+        }
+        post.send({ type: "message", text });
+      },
       onStderr: (text) => output.append(text),
       onExit: (reason) => {
         post.send({ type: "closed", reason });
@@ -83,7 +99,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
     }
     if (message.type === "ready") {
       startAgent();
-      post.send({ type: "init", cwd: folder });
+      post.send({ type: "init", cwd: folder, clientCapabilities: CLIENT_CAPABILITIES });
     } else if (message.type === "send") {
       if (!agent?.running) {
         post.send({ type: "closed", reason: "The agent is not running." });
@@ -100,10 +116,25 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
   current.onDidDispose(() => {
     post.dispose();
     stopAgent();
+    tools.dispose(); // ends the commands the agent started and closes their terminals
+    if (editorTools === tools) {
+      editorTools = undefined;
+    }
     if (panel === current) {
       panel = undefined;
     }
   });
+}
+
+// Answers one agent request (fs/* or terminal/*) and sends the reply back on the same agent. If the agent has
+// stopped meanwhile, nothing is waiting for the reply, so a failed send is dropped.
+async function answerAgentRequest(request: ClientRequest, agentProcess: AgentProcess, tools: EditorTools): Promise<void> {
+  const reply = await answerClientRequest(request, (method, params) => tools.handle(method, params));
+  try {
+    agentProcess.send(reply);
+  } catch {
+    // The agent is gone; see the closed message from its exit.
+  }
 }
 
 function stopAgent(): void {

@@ -191,7 +191,8 @@ To try the panel, open `extensions\vscode` in VS Code and press F5 (Run Extensio
 - **Which agent runs:** the setting `localAgent.command` (an array; default `["local-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. The command is spawned without a shell (`shell: false`), so the first item must be an `.exe` on PATH or a full path; a `.cmd` or `.bat` shim will not start. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\local-agent", "local-agent"]`. Reload the window after a change.
 - **Folder:** the panel works in the first workspace folder. With no folder open, it says so and does not start the agent.
 - **Logs:** the output channel **local-agent** shows the command line and the agent's stderr.
-- **Not yet:** packaging (`vsce package`, a `.vsix` that uses the PATH command) is T22; the editor tools and context are T20 and T21. Saved chats and settings work through the same server.
+- **Editor tools (T20):** in the panel, the agent's file and command tools run in the editor. `read_file` returns the text of an open file as it is in the editor, unsaved changes included. `write_file` and `edit_file` show the diff in the approval dialog, then change the open file as an edit, so **Ctrl+Z** (the editor's undo) reverts it while the file is open. A file the agent changes is saved when it had no unsaved changes of yours; if it had, the change stays unsaved and the agent is told to ask you to save. Undo after a save brings back the text in the editor, and the disk keeps the agent's text until you save. `run_command` and `run_tests` run in a VS Code terminal named **local-agent**, and the output (stdout and stderr together) goes back to the agent. The terminal is a pseudoterminal, not a shell: it has no input, no colours and no shell profile. A browser or CLI session keeps the agent's own tools. Details: `docs/protocol.md`, "Client methods".
+- **Not yet:** packaging (`vsce package`, a `.vsix` that uses the PATH command) is T22; the editor context (selection, `@file`, diagnostics) is T21. Saved chats and settings work through the same server.
 
 ## Configuration
 
@@ -398,7 +399,7 @@ src/local_agent/
   config_write.py      # the settings editor's allowlist and its write to config.toml (tomlkit: comments and the layout are kept)
   atomic.py            # atomic file writes (temp file, flush, os.replace) used by sessions and the settings editor
   web/                 # the web UI: index.html, style.css and js/ (transport.js, acp.js, chat.js, panels.js, main.js); no build step
-  extensions/vscode/   # the VS Code extension (T19): the panel, the stdio relay and the node tests; see the VS Code section
+  extensions/vscode/   # the VS Code extension (T19, T20): the panel, the stdio relay, the editor tools and the tests; see the VS Code section
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage

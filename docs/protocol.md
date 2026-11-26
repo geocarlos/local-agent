@@ -93,6 +93,8 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 
 `protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text blocks only, so all prompt capabilities are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
 
+`clientCapabilities` is read (T20): with `fs.readTextFile`, `fs.writeTextFile` or `terminal` set to `true`, the agent sends the client methods in "Client methods" below for the file and command tools. Each one is separate. The agent does not advertise anything for them of its own. The CLI, the browser and the pywebview window declare none, so they keep the local tools.
+
 ### `session/new` (client request)
 
 ```json
@@ -309,6 +311,37 @@ Full example, a write approved once:
 
 `toolCallId` is `t<turn>-<call>`, where `<turn>` counts the prompts of the session (1, 2, ...), so ids stay unique within a session.
 
+### Client methods (agent requests to the client, T20)
+
+The agent's file and command tools run in the client when the client declared the capability in `initialize`:
+
+| Capability | Tools | Requests |
+|---|---|---|
+| `fs.readTextFile` | `read_file`, and the current text for `edit_file` and the `write_file` preview | `fs/read_text_file` |
+| `fs.writeTextFile` | `write_file`, `edit_file` | `fs/write_text_file` |
+| `terminal` | `run_command`, `run_tests` | `terminal/create`, `terminal/wait_for_exit`, `terminal/output`, `terminal/kill`, `terminal/release` |
+
+The names and shapes are ACP v1's, checked against the v1 release `schema.json` (agentclientprotocol.com, fetched 2026-11-26). All requests carry `sessionId`.
+
+```json
+{"jsonrpc":"2.0","id":"srv-4","method":"fs/read_text_file","params":{"sessionId":"sess-6f1c...","path":"C:\\work\\a.txt"}}
+{"jsonrpc":"2.0","id":"srv-4","result":{"content":"unsaved text\n"}}
+{"jsonrpc":"2.0","id":"srv-5","method":"fs/write_text_file","params":{"sessionId":"sess-6f1c...","path":"C:\\work\\a.txt","content":"new text\n"}}
+{"jsonrpc":"2.0","id":"srv-5","result":{"_meta":{"saved":true}}}
+{"jsonrpc":"2.0","id":"srv-6","method":"terminal/create","params":{"sessionId":"sess-6f1c...","command":"echo hi","args":[],"cwd":"C:\\work"}}
+{"jsonrpc":"2.0","id":"srv-6","result":{"terminalId":"t1"}}
+```
+
+- `fs/read_text_file`: params `path` (absolute, already checked against the workspace), optional `line` (1-based) and `limit` (lines). Result `{content}`: the text the editor has, unsaved changes included. The agent asks for the whole file (no `line`/`limit`) and numbers the lines itself. A missing file is the error `-32002`.
+- `fs/write_text_file`: params `path`, `content`. Result `null`, or `{"_meta": {"saved": false}}` when the change is in the editor but not on disk (the user had unsaved edits of their own). The agent tells the model in that case.
+- `terminal/create`: params `command`, `args` (a list, may be empty), `cwd` (absolute), optional `outputByteLimit`. Result `{terminalId}`. The agent sends a `cmd` command as one command line with `args: []`. The client runs a command with no arguments through the platform shell (`cmd.exe /d /s /c` on Windows, `/bin/sh -c` elsewhere) and a command with arguments as a program. PowerShell is sent as `powershell -NoProfile -NonInteractive -Command <text>` with those arguments.
+- `terminal/wait_for_exit` → `{exitCode, signal}`. `terminal/output` → `{output, truncated, exitStatus}`, with `exitStatus` `null` while the command runs. `terminal/kill` and `terminal/release` → `null`. `output` is stdout and stderr together.
+- Time limits: an fs request waits 30 s, and `terminal/output`, `kill` and `release` 5 s. `terminal/wait_for_exit` waits for the command timeout (`command_timeout_s`). On a timeout the agent kills the command, reads its output and releases it, and the tool result says it timed out.
+- Cancel: a `session/cancel` while the agent waits for an fs request or `terminal/wait_for_exit` ends the turn as `cancelled`. A command that was running is killed and released. The client does not need to answer after a cancel; a late answer is dropped without a warning.
+- An error answer, or no answer in time, is text for the model (`Error: ...`), and the turn goes on. The agent does not retry.
+- Approval and the sandbox are unchanged: the agent asks `session/request_permission` first where a tool asks, a path outside the workspace is asked for, and nothing is sent to the client for a call that is refused.
+- The approval diff for `write_file` and `edit_file` is computed from the client's text when the client can read, so the user sees the change against what is in the editor.
+
 ## Errors
 
 Errors are JSON-RPC error responses with `code`, `message` and, where useful, `data`.
@@ -341,7 +374,8 @@ A notification with an unknown method, or a `session/cancel` for an unknown sess
 
 Checked for T17 against the v1 release `schema.json` (agentclientprotocol.com, downloaded 2026-11-25): `session/list`, `session/load`, `session/set_config_option`, `user_message_chunk`, `sessionCapabilities.list` (an object, `{}`) and `loadSession` (a boolean) are all there, and none is marked unstable.
 
-- **Not implemented:** `session/resume`, `session/close`, `session/delete`, `session/set_mode`, authentication, `$/cancel_request`, the client's `fs/*` and `terminal/*` methods (the agent runs its own tools in the workspace), plans, slash commands and subagents.
+- **Not implemented:** `session/resume`, `session/close`, `session/delete`, `session/set_mode`, authentication, `$/cancel_request`, plans, slash commands and subagents. The client's `fs/*` and `terminal/*` methods are used when the client declares them (see Client methods above); the agent does not offer them itself.
+- **Client methods (T20):** the agent sends `terminal/create` with `args: []` for a command line (it runs through the client's shell, not as a program). ACP says `command` is the program; a client that starts it directly would not run `cmd` lines. The VS Code host runs them through the shell. `fs/read_text_file` `line` and `limit` are not sent by the agent yet.
 - **Session configuration:** only the `model` option, through `session/set_config_option` (ACP v1 shape: `configOptions` with `category: "model"`, `type: "select"`). Checked against the v1 schema (see below).
 - **Extensions:** `_local-agent/models`, `_local-agent/settings/get` and `_local-agent/settings/set` (see above).
 - **Prompts:** text blocks only.

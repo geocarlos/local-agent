@@ -4,6 +4,7 @@
 // into it. That part is covered by tests/test_webview_bundle.py (the bundle in Edge against a real agent).
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
+import { runEditorTools } from "./editorTools";
 
 const EXTENSION_ID = "local-agent.local-agent-vscode";
 const PANEL_TITLE = "local-agent";
@@ -48,4 +49,6 @@ export async function run(): Promise<void> {
   await waitFor(() => panelTabs().length === 1, "the chat panel to open again");
   await vscode.window.tabGroups.close(panelTabs()[0]);
   await waitFor(() => panelTabs().length === 0, "the second chat panel to close");
+
+  await runEditorTools();
 }
