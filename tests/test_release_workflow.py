@@ -175,6 +175,16 @@ def test_referenced_scripts_exist():
         assert (ROOT / rel).is_file(), rel
 
 
+def test_smoke_script_checks_the_window_backend_and_the_windowed_exe():
+    text = (ROOT / "packaging" / "smoke-exe.ps1").read_text(encoding="utf-8")
+    required_line = next(line for line in text.splitlines() if line.startswith("$Required"))
+    following = text[text.index(required_line):text.index(required_line) + 300]
+    for module in ("webview", "clr", "webview.platforms.winforms"):  # T18: pywebview's Windows backend loads
+        assert f'"{module}"' in following
+    assert "local-agent-gui.exe" in text
+    assert "$ConsoleSubsystem -ne 3" in text and "$GuiSubsystem -ne 2" in text  # console vs windowed exe
+
+
 def test_smoke_script_requires_ctypes_and_starts_serve_web_on_its_own_process():
     text = (ROOT / "packaging" / "smoke-exe.ps1").read_text(encoding="utf-8")
     required_line = next(line for line in text.splitlines() if line.startswith("$Required"))

@@ -8,6 +8,7 @@
 ;   {autopf}\local-agent (C:\Program Files\local-agent on 64-bit Windows).
 ; - Adds that folder to the machine PATH (HKLM ...\Session Manager\Environment, value Path), once.
 ; - On uninstall, removes exactly that PATH entry and nothing else.
+; - Adds a Start menu shortcut to the window (local-agent-gui.exe) in the all-users Start menu.
 ; - Creates nothing under any user profile. All state lives in %APPDATA%\local-agent, made by the app.
 ;
 ; NOT COMPILED in the T13 session: Inno Setup was not installed on the build machine. See TASKS.md (T13).
@@ -45,6 +46,11 @@ WizardStyle=modern
 
 [Files]
 Source: "..\dist\local-agent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+; The window (local-agent-gui.exe, no console). In the all-users Start menu, which an administrator install
+; writes; no per-user file is made. The shortcut has no WorkingDir: the app picks Documents as its folder.
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\local-agent-gui.exe"; Comment: "Open the local-agent window"
 
 [Code]
 const

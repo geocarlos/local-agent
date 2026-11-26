@@ -1,4 +1,4 @@
-"""The `local-agent` command: subcommands `chat` (the default), `serve --stdio`, `serve --web` and `gui`."""
+"""The `local-agent` command: subcommands `chat` (the default), `serve --stdio`, `serve --web` and `gui` (a desktop window)."""
 
 import argparse
 import os
@@ -9,9 +9,6 @@ from local_agent.config import ConfigError
 from local_agent.frontends import cli, server
 
 SUBCOMMANDS = ("chat", "serve", "gui")
-GUI_MESSAGE = ("The GUI arrives in a later version of local-agent. "
-               "Use `local-agent chat` in a terminal, or `local-agent serve --stdio` from an editor or another program.")
-GUI_EXIT_CODE = 2
 
 
 def _port(text: str) -> int:
@@ -48,10 +45,6 @@ def main(argv: list[str] | None = None) -> None:
     if argv and argv[0] in SUBCOMMANDS:
         command, argv = argv[0], argv[1:]
 
-    if command == "gui":
-        print(GUI_MESSAGE, file=sys.stderr)
-        raise SystemExit(GUI_EXIT_CODE)
-
     if command == "serve":
         parser = _serve_parser()
         args = parser.parse_args(argv)
@@ -86,5 +79,9 @@ def main(argv: list[str] | None = None) -> None:
             web.serve_web(settings, port=args.port or 0, config_file=config_file)
         else:
             server.serve_stdio(settings, config_file=config_file)
+    elif command == "gui":
+        from local_agent.frontends import gui  # the window stack is imported only for this command
+
+        raise SystemExit(gui.run(settings, config_file=config_file))
     else:
         cli.run(settings=settings)

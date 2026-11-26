@@ -23,6 +23,7 @@ A small command-line coding assistant that runs entirely on local models through
 - Python 3.14 (see `.python-version`)
 - [uv](https://docs.astral.sh/uv/)
 - Ollama, running locally (default `http://127.0.0.1:11434`)
+- For the desktop window (`local-agent gui`) on Windows: the Microsoft Edge WebView2 runtime. It comes with Windows 11 and most Windows 10 installs (see [Desktop window](#desktop-window-local-agent-gui))
 - A model with tool support, pulled into Ollama, for example:
 
   ```sh
@@ -46,6 +47,8 @@ The installer puts `local-agent` in `C:\Program Files\local-agent\` and adds tha
    ```powershell
    local-agent --help
    ```
+
+The installer also adds a **local-agent** entry to the Start menu. It opens the desktop window (`local-agent-gui.exe`, which has no console window); see [Desktop window](#desktop-window-local-agent-gui).
 
 To uninstall, use **Settings > Apps > Installed apps** (or Apps & features) and choose local-agent. The uninstaller removes its PATH entry and the install folder. It does not remove anyone's `%APPDATA%\local-agent` folder, which holds config and plugins (delete it by hand if you want that gone).
 
@@ -98,7 +101,7 @@ Type a request at the `You:` prompt. Type `exit` or `quit` to leave. Press Ctrl+
 | `local-agent` or `local-agent chat` | the terminal chat (the REPL above) |
 | `local-agent serve --stdio` | runs the agent as an Agent Client Protocol (ACP) server on stdin and stdout, for editors and other programs; see [docs/protocol.md](docs/protocol.md) |
 | `local-agent serve --web` | runs the same server over a WebSocket on `127.0.0.1` with a token printed at start, for the web UI and local clients; see [Web server](#web-server-serve---web) |
-| `local-agent gui` | a placeholder for now: it prints that the GUI arrives in a later version and exits with code 2 |
+| `local-agent gui` | opens the web UI in a desktop window: the same chat, tool cards and approvals as the browser; see [Desktop window](#desktop-window-local-agent-gui) |
 
 With no subcommand, every flag is a chat flag, so existing commands keep working. `chat` and `serve` take the same settings flags (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The subcommand must come first: `local-agent serve --stdio --cwd X`. `local-agent --cwd X serve --stdio` is refused with a message that says so. `local-agent --help` and `local-agent chat --help` list the subcommands.
 
@@ -150,6 +153,24 @@ The page in the browser also has:
 - Not in the settings editor, on purpose: `network_enabled` (it turns on web_fetch), `workspace`, `plugin_dir`, `plugins_enabled`, `disabled_plugins`, `mcp_servers` and `test_command` (they run code or start programs). Edit those by hand in `config.toml`.
 
 **Where chats are saved.** One JSON file per chat in `%APPDATA%\local-agent\sessions\` (the per-user data folder; nothing is written into the install folder). The file holds the folder, the model, the title, the times and the messages the model sees (not the reasoning text). Writes are atomic. A file that cannot be read is skipped with a warning, so the rest of the list still shows. At most 200 chats are kept (the least recently used are deleted, with a warning), and a chat over 5 MiB is not saved. The environment variable `LOCAL_AGENT_DATA_DIR` changes the data folder. A chat whose folder no longer exists is listed but cannot be opened, with a message that says why. The CLI (`local-agent chat`) does not save chats. The protocol is in [docs/protocol.md](docs/protocol.md#saved-sessions).
+
+### Desktop window (`local-agent gui`)
+
+`local-agent gui` starts the web server in the same process and opens the same page in a window (pywebview, on the Microsoft Edge WebView2 control). Chat, tool cards, approvals and saved chats work as they do in the browser. Closing the window stops the server and the command exits with code 0.
+
+```powershell
+uv run local-agent gui --cwd C:\src\my-project
+```
+
+- **What it needs:** the Microsoft Edge WebView2 runtime. Windows 11 has it, and most Windows 10 installs have it through Edge. If the window does not open, install the runtime from Microsoft (search for "WebView2 runtime"). The error says so.
+- **Flags:** the same settings flags as `chat` (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The workspace defaults to the current folder.
+- **The address:** the window opens the page at `http://127.0.0.1:PORT/#token=...` for one run. The port is free at each start and the token is new on each start. Neither is printed, because the window is the way in. The page itself is served without the token, but `/info` and the WebSocket refuse anything that lacks it.
+- **Installed:** the Start menu entry **local-agent** runs `local-agent-gui.exe` from `C:\Program Files\local-agent\`, with no console window. A Start menu shortcut starts in the program folder, so the window's workspace is your Documents folder instead, and a relative `--cwd` or `--config` given to that exe is resolved against Documents, not the program folder. To work in another folder, edit the shortcut and add `--cwd "C:\src\my-project"` after the target.
+- **Closing:** closing the window, or pressing Ctrl+C in the console that started `gui`, stops the server and exits with code 0.
+- **Privacy:** the window's WebView2 profile is private (pywebview's `private_mode`, set explicitly): cookies and local storage are not kept between runs. The profile folder is in a temporary location, and a normal close clears it. If the process is killed, a temporary profile folder can remain in `%TEMP%`; it is safe to delete.
+- **Problems:** from a console, the messages go to the console. The windowed program writes its messages to `%APPDATA%\local-agent\gui.log`: each start appends a `--- local-agent gui started ... ---` line first, and a log over 1 MB is moved to `gui.log.1` (one old copy is kept). It also shows a message box when it cannot open the window.
+
+Status: tested on Windows 11 with Python 3.14 (pywebview 6.2.1, pythonnet 3.2.1); the frozen build was run on the same machine, and the installer compiles (it was not installed here). Only Windows is supported for the window; on other systems `local-agent serve --web` and a browser do the same job.
 
 ## Configuration
 
@@ -347,7 +368,7 @@ Entry points are loaded sorted by name, after the folder. A module that was alre
 
 ```
 src/local_agent/
-  __init__.py          # main() entry point: subcommands chat, serve --stdio, serve --web, gui (placeholder); parses flags, loads settings, changes into the workspace
+  __init__.py          # main() entry point: subcommands chat, serve --stdio, serve --web, gui; parses flags, loads settings, changes into the workspace
   __main__.py          # python -m local_agent
   frontends/server.py  # ACP over JSON-RPC lines (StdioServer: sessions, prompt turns on a worker thread, permission requests); serve --stdio; the start-up shared with --web
   frontends/web.py     # serve --web: FastAPI and uvicorn on 127.0.0.1; a WebSocket per connection running a StdioServer; token and Origin checks
@@ -476,6 +497,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build.ps1
 
 It runs `uv sync --locked`, then PyInstaller with `packaging\local-agent.spec`. The output is the folder `dist\local-agent\`: `local-agent.exe` and an `_internal` folder beside it. Copy that whole folder to run the app elsewhere; the exe needs no Python to run. `build\` is PyInstaller's work folder and can be deleted. Both `build\` and `dist\` are git-ignored.
 
+- **Two executables (T18):** `local-agent.exe` (console: chat, `serve`, `gui` from a terminal) and `local-agent-gui.exe` (windowed: `gui` only, for the Start menu), built from one spec into one folder (`MERGE`). Both share `_internal\`. The window needs the pywebview Windows backend: `pythonnet`, `clr_loader`, the WebView2 loader DLLs and `Microsoft.Web.WebView2`; PyInstaller's hooks for them are in `pyinstaller-hooks-contrib`. `packaging\smoke-exe.ps1` checks the subsystem of both exes and that the backend imports.
 - **Size (T12, this machine):** 46.4 MiB in 212 files (48,661,837 bytes), after adding the standard-library modules below.
 - **Python version:** PyInstaller 6.22.3 (a dev dependency) declares Python 3.14 support and builds on the project's Python 3.14, so `requires-python` is unchanged.
 - **Tests against the exe:** `$env:LOCAL_AGENT_EXE = "dist\local-agent\local-agent.exe"; uv run pytest tests\test_frozen_exe.py`. Without an exe, that file is skipped; a plain `uv run pytest` never builds anything.
@@ -484,6 +506,7 @@ Limitations of the built app:
 
 - **Entry-point plugins are not loaded.** A package installed with a `local_agent.tools` entry point cannot be added to the frozen app. The loader finds none and prints nothing. **File plugins still load:** a `*.py` file in the tools folder can `from local_agent.plugin import tool` and use the standard-library modules bundled in the app. The build lists these extra ones in `hiddenimports` (`packaging\local-agent.spec`): `sqlite3`, `xml.etree.ElementTree`, `xml.dom.minidom`, `unittest`, `csv`, `decimal` and `zipfile`. Other standard-library modules are not guaranteed: a module the build does not bundle fails with a clear per-plugin warning, and the agent runs on without that plugin. Pure-Python modules are sometimes in the bundle without being listed (`colorsys` loaded in the check below), so add a module to `hiddenimports` before relying on it. `tkinter` is excluded. A package that is not standard library (a plugin importing `rich`, for example) is refused with a `ModuleNotFoundError` warning in the same way.
 - **Standard-library DLLs on the build machine.** The build machine's base Python is miniforge/conda (`C:\ProgramData\miniforge3`). Its DLLs for `_ctypes` (`ffi-8.dll`), `_bz2` (`libbz2.dll`), `_lzma` (`liblzma.dll`) and `_sqlite3` (`sqlite3.dll`) are in its `Library\bin` folder, which PyInstaller does not collect here (the build log reports `Library not found`). So on this build, plugins that import `ctypes`, `bz2`, `lzma` or `sqlite3` fail with a warning, even though `sqlite3` is in the list above. A build on a python.org or uv-managed Python (T14 CI) may differ; that is not verified.
+- **The T18 build (this machine, conda):** `local-agent-gui.exe` also needs `ffi-8.dll` (`ctypes`), and the smoke test needs `sqlite3.dll` (`sqlite3`), `libbz2.dll` and `liblzma.dll` (the optional `bz2` and `lzma`) copied from `C:\ProgramData\miniforge3\Library\bin` into `dist\local-agent\_internal\`. Without the copies, the windowed exe stops at import, with no console to show why; it now writes the traceback to `gui.log` and shows a message box (`packaging\gui_launcher.py`).
 - **`ctypes` is now required by the smoke test.** `serve --web` imports it through click (uvicorn's dependency), so an exe without `_ctypes` cannot start the web server. On the conda build machine, copy `ffi-8.dll` into the app's `_internal` folder; with that copy, the reviewer ran `serve --web` and `initialize` succeeded. Without it, `packaging\smoke-exe.ps1` fails at step 4.
 - **MCP servers run the program they name.** `command` is looked up on PATH, so a Python MCP server needs a Python of its own; the exe does not provide one.
 - **Ollama is not included.** It must run as before (see Requirements).

@@ -1,4 +1,4 @@
-"""The `local-agent` subcommands (T11): chat (the default), serve --stdio and the gui placeholder."""
+"""The `local-agent` subcommands (T11): chat (the default), serve --stdio, serve --web and gui (T18)."""
 
 import pytest
 
@@ -12,13 +12,49 @@ def _empty_config(tmp_path):
     return path
 
 
-def test_gui_is_a_placeholder_that_exits_with_code_2(capsys):
+def test_gui_opens_the_window_with_the_shared_flags(monkeypatch, tmp_path):
+    from local_agent.frontends import gui
+
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "work"
+    folder.mkdir()
+    seen = {}
+
+    def fake_run(settings, *, config_file=None, **kwargs):
+        seen.update(settings=settings, config_file=config_file)
+        return 0
+
+    monkeypatch.setattr(gui, "run", fake_run)
+    config = _empty_config(tmp_path)
+
     with pytest.raises(SystemExit) as exit_info:
-        main(["gui"])
+        main(["gui", "--model", "some-model", "--cwd", str(folder), "--num-ctx", "4096", "--no-plugins",
+              "--config", str(config)])
+
+    assert exit_info.value.code == 0
+    settings = seen["settings"]
+    assert settings.model == "some-model"
+    assert settings.num_ctx == 4096
+    assert settings.workspace == folder.resolve()
+    assert settings.plugins_enabled is False
+    assert seen["config_file"] == config
+
+
+def test_gui_exit_code_comes_from_the_window_command(monkeypatch, tmp_path):
+    from local_agent.frontends import gui
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gui, "run", lambda settings, **kwargs: 1)
+    with pytest.raises(SystemExit) as exit_info:
+        main(["gui", "--config", str(_empty_config(tmp_path))])
+    assert exit_info.value.code == 1
+
+
+def test_gui_with_a_bad_config_exits_2(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["gui", "--config", str(tmp_path / "missing.toml")])
     assert exit_info.value.code == 2
-    err = capsys.readouterr().err
-    assert "later version" in err
-    assert "serve --stdio" in err
+    assert "config file not found" in capsys.readouterr().err
 
 
 def test_serve_without_a_transport_says_to_choose_stdio(capsys):

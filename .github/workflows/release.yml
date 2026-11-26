@@ -86,7 +86,7 @@ jobs:
       - name: Run the test suite
         shell: pwsh
         run: |
-          uv run --locked pytest -q
+          uv run --locked pytest -q --ignore=tests/test_gui_window.py  # real window: non-blocking step in ci.yml
           if ($LASTEXITCODE -ne 0) { throw "pytest failed" }
 
       - name: Build local-agent.exe
