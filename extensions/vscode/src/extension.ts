@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { DIAGNOSTICS_METHOD, answerClientRequest, clientRequestOf, ClientRequest } from "./clientRouter";
-import { CLIENT_CAPABILITIES, parseWebviewMessage, HostToWebview } from "./messages";
+import { CLIENT_CAPABILITIES, notFoundText, parseWebviewMessage, HostToWebview } from "./messages";
 import { activeFileOf, diagnosticsReply, SelectionAttachment } from "./attachments";
 import {
   activeFileAttachment,
@@ -230,8 +230,7 @@ function notFoundMessage(program: string): void {
   const open = "Open Settings";
   void vscode.window
     .showErrorMessage(
-      `Wildcat Code Agent cannot find "${program}". The command is set by the wildcatCodeAgent.command setting. ` +
-        "Install the app, or set the full path to wildcat-code-agent.exe there.",
+      notFoundText(program),
       open,
     )
     .then((choice) => {

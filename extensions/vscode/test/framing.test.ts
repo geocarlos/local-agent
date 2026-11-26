@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeLine, LineSplitter } from "../src/framing";
-import { parseWebviewMessage } from "../src/messages";
+import { notFoundText, parseWebviewMessage } from "../src/messages";
 import { serveArgv } from "../src/stdioAgent";
 
 test("a line split across chunks is joined once the newline arrives", () => {
@@ -56,4 +56,15 @@ test("serveArgv puts the setting's extra items before serve --stdio --cwd", () =
 test("serveArgv refuses an empty command with a message that names the setting", () => {
   assert.throws(() => serveArgv([], "C:\\work"), /wildcatCodeAgent\.command is empty/);
   assert.throws(() => serveArgv(["  "], "C:\\work"), /wildcatCodeAgent\.command is empty/);
+});
+
+test("the not-found error names the program, says to restart VS Code, and points at the setting", () => {
+  const text = notFoundText("wildcat-code-agent");
+  assert.match(text, /cannot find "wildcat-code-agent"/);
+  // A VS Code opened before the install keeps the old PATH; a full restart is the fix, not Reload Window.
+  assert.match(text, /installed the app after VS Code started, close every VS Code window and open it again/);
+  assert.match(text, /Reload Window is not enough/);
+  assert.match(text, /wildcatCodeAgent\.command/);
+  assert.match(text, /wildcat-code-agent\.exe/);
+  assert.match(notFoundText("wca"), /cannot find "wca"/);
 });
