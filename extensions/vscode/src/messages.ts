@@ -56,3 +56,14 @@ export function parseWebviewMessage(data: unknown): WebviewToHost | null {
   }
   return null;
 }
+
+// The error shown when the agent's program cannot be started because it is not found (ENOENT). The most common
+// cause after a fresh install is a VS Code that was already open: Windows gives a program the PATH it started with,
+// so the new install folder is not on VS Code's PATH until every VS Code window is closed and opened again.
+export function notFoundText(program: string): string {
+  return (
+    `Wildcat Code Agent cannot find "${program}". If you installed the app after VS Code started, close every ` +
+    "VS Code window and open it again (Reload Window is not enough). Otherwise install the app, or set the full " +
+    "path to wildcat-code-agent.exe in the wildcatCodeAgent.command setting."
+  );
+}
