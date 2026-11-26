@@ -118,7 +118,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 
 ## M4: VS Code extension
 
-### T19 Extension scaffold and chat panel: `todo`
+### T19 Extension scaffold and chat panel: `in review`
 - **Verify first:** current VS Code Chat Participant API shape (for the later option; the first UI is our own webview).
 - TypeScript extension in `extensions/vscode/`; spawns `local-agent serve --stdio`; webview panel reuses the T16 bundle.
 - **Done when:** you can chat in a VS Code panel and approve a core-side write.
@@ -612,3 +612,35 @@ Findings from **verify** items and follow-ups go here, by task id.
 
 - **First CI run (PR #15, windows-latest):** `test_the_window_opens_the_page_and_connects` passed on the runner (a real WebView2 window works there). `test_ctrl_c_in_a_console_closes_the_window_and_exits_0` failed in both the `ci.yml` non-blocking step and the `release.yml` test step: the window opened, but the Ctrl+C sent through the helper (attach to the child's console, `CTRL_C_EVENT`) did not close it within 60 s. It passes on this machine. Cause not investigated (likely the runner's service session and console attach behaviour). **Decided:** `release.yml` also runs `pytest --ignore=tests/test_gui_window.py`, so the window tests stay non-blocking everywhere; the `ci.yml` step keeps reporting them.
 - **Follow-up:** find why Ctrl+C delivery fails on windows-latest (or make the test skip there with a reason), then make the window tests a required gate.
+
+**T19**
+- **Verify (chat participant API, checked 2026-11-26):** `@types/vscode` 1.146.0 (latest; VS Code 1.148 installed) has `chat.createChatParticipant(id, handler)`, `ChatRequestHandler(request, context, response: ChatResponseStream, token)`, and no `@deprecated` tag. The official guide (code.visualstudio.com/api/extension-guides/chat, fetched the same day) says chat participants are deprecated for the Copilot harness, kept for the Local harness, and not to be used for new Copilot integrations. **Decided:** the first UI is our own webview; no chat participant is built.
+- **Decided (extension layout):** `extensions/vscode/` (TypeScript, `engines.vscode ^1.146.0`). `src/extension.ts` is the only file that imports `vscode`; `framing.ts` (JSON lines), `messages.ts` (webview/host message shapes), `stdioAgent.ts` (the child process, injected `spawn`), `webviewHtml.ts` (the page, CSP and nonce) are pure and tested without VS Code.
+- **Decided (bundle):** the web bundle is copied at build time from `src/local_agent/web` to `extensions/vscode/webview/` (`scripts/copy-webview.mjs`, run by `npm run compile`). The copy is git-ignored, so there is one source. T22 decides the packaged layout.
+- **Decided (transport seam):** `js/transport.js` gains `connectHostLink(api)`, a postMessage link next to `connectWebSocket`. `js/main.js` takes an opener: `openBrowserLink(token)` (the `/info` check and WebSocket, unchanged behaviour) or `connectHostLink(acquireVsCodeApi())`. No second copy of the bundle. Settings and models use ACP methods that the stdio server also serves, so nothing is hidden in the webview.
+- **Decided (host protocol):** webview to host `{type: "ready"}` (the host starts the agent and answers `{type: "init", cwd}`) and `{type: "send", text}`. Host to webview `{type: "message", text}` (one line from the agent), `{type: "closed", reason}`. The host does not read the JSON-RPC; the bundle's `AcpClient` does, so approvals need no host code.
+- **Decided (agent command):** setting `localAgent.command`, an array, default `["local-agent"]` (on PATH). The host appends `serve --stdio --cwd <first workspace folder>`. Development: `["uv", "run", "--project", "<repo>", "local-agent"]`. With no folder open the panel says so and starts no agent. The setting is minimal; the final path story is T22.
+- **Decided (CSP):** `default-src 'none'`; scripts need the per-load nonce or the webview source; styles, images and fonts only from the webview source; `connect-src 'none'`. `localResourceRoots` is the bundle folder only. No inline script or style is added.
+- **Decided (approvals):** a core-side write (`session/request_permission`) reaches the webview as an ACP request and the existing approval dialog answers it, unchanged. The host relays it.
+- **Tests:**
+  - `extensions/vscode/test/` (node test runner, `npm test`, no VS Code): `framing.test.ts` (8), `webviewHtml.test.ts` (4), `stdioAgent.test.ts` (4, real node child processes: echo, stderr, exit code, send refused when not running, missing program), `webview-transport.test.mjs` (4, the bundle's `connectHostLink` with fake `acquireVsCodeApi` and window).
+  - `tests/test_webview_bundle.py` (2, Edge + Playwright): the real bundle with an `acquireVsCodeApi` shim relays to a real `serve --stdio` process with the scripted model. Chat streams a reply; an approved edit shows the diff dialog, the answer goes back, the file changes.
+  - `extensions/vscode/test-e2e/` (`npm run test:e2e`, not in `npm test`): starts VS Code 1.148 in development mode and checks that the extension activates, the command opens one panel, a second call reveals it, and closing and reopening work.
+- **Verified:**
+  - `npm test` in `extensions/vscode`: 20 passed, 0 failed.
+  - `npm run compile` (tsc): exit 0, no errors.
+  - `npm run test:e2e` against the installed VS Code (`VSCODE_PATH`): exit 0 on two runs. VS Code printed `Error mutex already exists`, its own single-instance message.
+  - `uv run pytest -q -rs` (full, background run, 236.96 s): **976 passed, 1 failed, 2 skipped**. The 2 skips are the symlink-privilege skips seen in T18. The failure is `tests/test_gui_window.py::test_ctrl_c_in_a_console_closes_the_window_and_exits_0` ("Ctrl+C did not close the window within 60 s"). The same test failed on `windows-latest` in the T18 CI run. It passed locally in T18, and it failed here in this run. T19 does not touch `gui.py` or the window code. Cause not investigated.
+  - `tests/test_webview_bundle.py tests/test_web_browser.py tests/test_web_assets.py`: 28 passed, 1 skipped (the symlink skip).
+  - `uvx --from actionlint-py actionlint .github/workflows/ci.yml`: exit 0 (new `extension` job).
+- **Not verified:**
+  - Driving the panel by hand inside VS Code (typing into it and seeing the approval dialog there). The E2E suite does not type into the webview, because VS Code has no API for that. The bundle in a webview is checked in Edge only, against a real server; the host relay is checked by unit tests with real child processes, not inside VS Code.
+  - That the agent process starts when the panel opens in VS Code. The E2E suite has no observable hook for it.
+  - The new CI `extension` job on GitHub (it has not run yet).
+  - The `test_gui_window.py` Ctrl+C failure above (not a T19 change; it stays non-blocking in CI).
+- **Follow-ups:**
+  - T22: packaging. `vsce package`, the `.vsix`, the PATH-or-bundled executable choice, and how `webview/` is packaged.
+  - The panel cannot open a second chat, and after the agent exits the user must close and reopen the panel (no reconnect).
+  - A folder must be open; the panel does not fall back to the home folder.
+  - Possibly move the `test:e2e` run into CI once there is a display (or a headless runner).
+  - The `test_gui_window.py` Ctrl+C failure on this machine and on windows-latest (T18 follow-up, now seen twice).
