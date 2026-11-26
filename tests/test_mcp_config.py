@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from local_agent.config import ConfigError, McpServer, load_settings
+from wildcat_code_agent.config import ConfigError, McpServer, load_settings
 
 
 def settings_from(tmp_path: Path, text: str):

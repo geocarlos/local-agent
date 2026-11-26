@@ -1,4 +1,4 @@
-"""The real binary (T11): `python -m local_agent serve --stdio` as a subprocess, against an unreachable Ollama.
+"""The real binary (T11): `python -m wildcat_code_agent serve --stdio` as a subprocess, against an unreachable Ollama.
 
 Proves that the process speaks the protocol on stdout and nothing else: initialize, session/new and a
 prompt get their JSON-RPC answers, the Ollama-down failure is a JSON-RPC error, and EOF ends the process
@@ -37,7 +37,7 @@ import os
 import subprocess
 import sys
 
-from local_agent.plugin import Risk, tool
+from wildcat_code_agent.plugin import Risk, tool
 
 os.system("echo LEAK")                                   # a child shell inherits fd 1
 os.write(1, b"LEAK2\\n")                                  # a direct write to fd 1
@@ -59,7 +59,7 @@ def test_child_processes_and_direct_writes_from_a_plugin_stay_off_the_protocol_s
     # TOML literal string: no escaping needed for Windows paths
     config.write_text(f"plugin_dir = '{plugin_dir}'\n", encoding="utf-8")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "local_agent", "serve", "--stdio",
+        [sys.executable, "-m", "wildcat_code_agent", "serve", "--stdio",
          "--host", "http://127.0.0.1:1", "--config", str(config), "--cwd", str(tmp_path)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
@@ -91,7 +91,7 @@ def test_serve_stdio_binary_answers_only_json_and_reports_ollama_down(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text("", encoding="utf-8")  # the user's own config is never read
     proc = subprocess.Popen(
-        [sys.executable, "-m", "local_agent", "serve", "--stdio",
+        [sys.executable, "-m", "wildcat_code_agent", "serve", "--stdio",
          "--host", "http://127.0.0.1:1",  # nothing listens here: Ollama is "down"
          "--config", str(config), "--no-plugins", "--cwd", str(tmp_path)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

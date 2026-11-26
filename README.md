@@ -1,6 +1,8 @@
-# local-agent
+# Wildcat Code Agent
 
 A small command-line coding assistant that runs entirely on local models through [Ollama](https://ollama.com). You chat with it in the terminal; it can read files, and with your approval, write files and run shell commands.
+
+Formerly `local-agent`. The command is now `wildcat-code-agent`. On first run, an existing `%APPDATA%\local-agent` folder (config, plugins, saved sessions) is moved to `%APPDATA%\wildcat-code-agent`. The VS Code setting `localAgent.command` is now `wildcatCodeAgent.command`.
 
 ## Features
 
@@ -23,7 +25,7 @@ A small command-line coding assistant that runs entirely on local models through
 - Python 3.14 (see `.python-version`)
 - [uv](https://docs.astral.sh/uv/)
 - Ollama, running locally (default `http://127.0.0.1:11434`)
-- For the desktop window (`local-agent gui`) on Windows: the Microsoft Edge WebView2 runtime. It comes with Windows 11 and most Windows 10 installs (see [Desktop window](#desktop-window-local-agent-gui))
+- For the desktop window (`wildcat-code-agent gui`) on Windows: the Microsoft Edge WebView2 runtime. It comes with Windows 11 and most Windows 10 installs (see [Desktop window](#desktop-window-wildcat-code-agent-gui))
 - A model with tool support, pulled into Ollama, for example:
 
   ```sh
@@ -38,19 +40,19 @@ uv sync
 
 ## Install (Windows)
 
-The installer puts `local-agent` in `C:\Program Files\local-agent\` and adds that folder to the machine PATH, so every account on the computer can run it.
+The installer puts `wildcat-code-agent` in `C:\Program Files\wildcat-code-agent\` and adds that folder to the machine PATH, so every account on the computer can run it.
 
-1. Download `local-agent-<version>-setup.exe` (or build it, see [Building the installer](#building-the-installer)).
+1. Download `wildcat-code-agent-<version>-setup.exe` (or build it, see [Building the installer](#building-the-installer)).
 2. Run it as an administrator (it asks for elevation; it needs admin rights to write to Program Files and the machine PATH). It is 64-bit only. The installer is unsigned, so SmartScreen will warn: choose **More info**, then **Run anyway**.
 3. Close all terminals (including Windows Terminal and VS Code) and start a fresh one from the Start menu, or sign out and back in (terminals that were already open do not see the PATH change). Then check:
 
    ```powershell
-   local-agent --help
+   wildcat-code-agent --help
    ```
 
-The installer also adds a **local-agent** entry to the Start menu. It opens the desktop window (`local-agent-gui.exe`, which has no console window); see [Desktop window](#desktop-window-local-agent-gui).
+The installer also adds a **wildcat-code-agent** entry to the Start menu. It opens the desktop window (`wildcat-code-agent-gui.exe`, which has no console window); see [Desktop window](#desktop-window-wildcat-code-agent-gui).
 
-To uninstall, use **Settings > Apps > Installed apps** (or Apps & features) and choose local-agent. The uninstaller removes its PATH entry and the install folder. It does not remove anyone's `%APPDATA%\local-agent` folder, which holds config and plugins (delete it by hand if you want that gone).
+To uninstall, use **Settings > Apps > Installed apps** (or Apps & features) and choose wildcat-code-agent. The uninstaller removes its PATH entry and the install folder. It does not remove anyone's `%APPDATA%\wildcat-code-agent` folder, which holds config and plugins (delete it by hand if you want that gone).
 
 The installer creates nothing under any user profile. It does not change Ollama.
 
@@ -58,9 +60,9 @@ The installer creates nothing under any user profile. It does not change Ollama.
 
 One install serves every account on the machine. What is per account and what is shared:
 
-- **The program:** shared, in `C:\Program Files\local-agent\`.
-- **Config and plugins:** per account, under that account's `%APPDATA%\local-agent\` (`config.toml`, and a `tools` folder for plugins). Each account has its own settings and plugins; changing one does not change another.
-- **MCP server logs:** per account, in that account's `%TEMP%` (a temp file per server, from `tempfile`), not under `%APPDATA%\local-agent`.
+- **The program:** shared, in `C:\Program Files\wildcat-code-agent\`.
+- **Config and plugins:** per account, under that account's `%APPDATA%\wildcat-code-agent\` (`config.toml`, and a `tools` folder for plugins). Each account has its own settings and plugins; changing one does not change another.
+- **MCP server logs:** per account, in that account's `%TEMP%` (a temp file per server, from `tempfile`), not under `%APPDATA%\wildcat-code-agent`.
 - **Workspace:** whatever folder the account runs in (`--cwd`, or the current folder). The tools can only touch files inside it, unless you approve more.
 - **Ollama:** the server is one process per port, not per account (see below).
 
@@ -82,14 +84,14 @@ Notes on a shared folder (not verified on this machine with two accounts):
 - A server started by account A stops when A signs out, so account B depends on A staying signed in while B uses that server.
 - Account B's Ollama tray app may start automatically and fail to bind port 11434 while A's server runs. This is expected from the port rule above, but not observed.
 
-If Ollama is not reachable from an account, `local-agent` prints the usual message and keeps the prompt: start Ollama from that account, or set `host` (or `OLLAMA_HOST`) to the address of the server that is running.
+If Ollama is not reachable from an account, `wildcat-code-agent` prints the usual message and keeps the prompt: start Ollama from that account, or set `host` (or `OLLAMA_HOST`) to the address of the server that is running.
 
 Manual check for a second account: [docs/manual-checks/T13-second-account.md](docs/manual-checks/T13-second-account.md).
 
 ## Usage
 
 ```sh
-uv run local-agent
+uv run wildcat-code-agent
 ```
 
 Type a request at the `You:` prompt. Type `exit` or `quit` to leave. Press Ctrl+C during a reply to cancel it.
@@ -98,38 +100,38 @@ Type a request at the `You:` prompt. Type `exit` or `quit` to leave. Press Ctrl+
 
 | Command | What it does |
 | --- | --- |
-| `local-agent` or `local-agent chat` | the terminal chat (the REPL above) |
-| `local-agent serve --stdio` | runs the agent as an Agent Client Protocol (ACP) server on stdin and stdout, for editors and other programs; see [docs/protocol.md](docs/protocol.md) |
-| `local-agent serve --web` | runs the same server over a WebSocket on `127.0.0.1` with a token printed at start, for the web UI and local clients; see [Web server](#web-server-serve---web) |
-| `local-agent gui` | opens the web UI in a desktop window: the same chat, tool cards and approvals as the browser; see [Desktop window](#desktop-window-local-agent-gui) |
+| `wildcat-code-agent` or `wildcat-code-agent chat` | the terminal chat (the REPL above) |
+| `wildcat-code-agent serve --stdio` | runs the agent as an Agent Client Protocol (ACP) server on stdin and stdout, for editors and other programs; see [docs/protocol.md](docs/protocol.md) |
+| `wildcat-code-agent serve --web` | runs the same server over a WebSocket on `127.0.0.1` with a token printed at start, for the web UI and local clients; see [Web server](#web-server-serve---web) |
+| `wildcat-code-agent gui` | opens the web UI in a desktop window: the same chat, tool cards and approvals as the browser; see [Desktop window](#desktop-window-wildcat-code-agent-gui) |
 
-With no subcommand, every flag is a chat flag, so existing commands keep working. `chat` and `serve` take the same settings flags (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The subcommand must come first: `local-agent serve --stdio --cwd X`. `local-agent --cwd X serve --stdio` is refused with a message that says so. `local-agent --help` and `local-agent chat --help` list the subcommands.
+With no subcommand, every flag is a chat flag, so existing commands keep working. `chat` and `serve` take the same settings flags (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The subcommand must come first: `wildcat-code-agent serve --stdio --cwd X`. `wildcat-code-agent --cwd X serve --stdio` is refused with a message that says so. `wildcat-code-agent --help` and `wildcat-code-agent chat --help` list the subcommands.
 
 Flags override the config file and the environment for one run:
 
 ```sh
-uv run local-agent --model qwen3-vl:8b --num-ctx 8192
-uv run local-agent chat --cwd C:\src\my-project --config C:\tmp\alt.toml
-uv run local-agent --profile minimal
+uv run wildcat-code-agent --model qwen3-vl:8b --num-ctx 8192
+uv run wildcat-code-agent chat --cwd C:\src\my-project --config C:\tmp\alt.toml
+uv run wildcat-code-agent --profile minimal
 ```
 
 ### Serve mode (stdio)
 
-`local-agent serve --stdio` speaks JSON-RPC 2.0, one message per line, on stdin and stdout, with the ACP methods `initialize`, `session/new`, `session/prompt` and `session/cancel`. The agent sends `session/update` notifications while a turn runs and asks for approvals with `session/request_permission`. Logs and warnings go to stderr, so stdout carries only protocol lines. While the server runs, file descriptor 1 points at stderr too, so output from plugins and child processes (`os.system`, `subprocess`, direct writes) lands on stderr and cannot corrupt the protocol. The full message list, the permission flow, the error codes and the deviations from ACP are in [docs/protocol.md](docs/protocol.md). Session "allow always" answers are kept per session. MCP servers named in `session/new` are ignored; configure them in `config.toml`. A server keeps at most 64 sessions; each line is capped at 16 MiB. On shutdown (stdin closed or Ctrl+C) running turns get 10 s in total to stop; a turn still running after that is reported on stderr, and the MCP servers and plugins are closed.
+`wildcat-code-agent serve --stdio` speaks JSON-RPC 2.0, one message per line, on stdin and stdout, with the ACP methods `initialize`, `session/new`, `session/prompt` and `session/cancel`. The agent sends `session/update` notifications while a turn runs and asks for approvals with `session/request_permission`. Logs and warnings go to stderr, so stdout carries only protocol lines. While the server runs, file descriptor 1 points at stderr too, so output from plugins and child processes (`os.system`, `subprocess`, direct writes) lands on stderr and cannot corrupt the protocol. The full message list, the permission flow, the error codes and the deviations from ACP are in [docs/protocol.md](docs/protocol.md). Session "allow always" answers are kept per session. MCP servers named in `session/new` are ignored; configure them in `config.toml`. A server keeps at most 64 sessions; each line is capped at 16 MiB. On shutdown (stdin closed or Ctrl+C) running turns get 10 s in total to stop; a turn still running after that is reported on stderr, and the MCP servers and plugins are closed.
 
 ```sh
-uv run local-agent serve --stdio --cwd C:\src\my-project
+uv run wildcat-code-agent serve --stdio --cwd C:\src\my-project
 ```
 
 If Ollama is not running, you get `Error: Cannot reach Ollama at http://127.0.0.1:11434. Start it with ollama serve ...`. Start the server and send the request again. If the model is not installed, the error suggests `ollama pull qwen3-vl:8b`.
 
 ### Web server (`serve --web`)
 
-`local-agent serve --web` runs the same agent server as `--stdio`, over a WebSocket at `ws://127.0.0.1:PORT/ws`. Each WebSocket is one ACP session server, with the same messages, events, approvals and errors; the protocol is in [docs/protocol.md](docs/protocol.md#websocket-transport-serve---web).
+`wildcat-code-agent serve --web` runs the same agent server as `--stdio`, over a WebSocket at `ws://127.0.0.1:PORT/ws`. Each WebSocket is one ACP session server, with the same messages, events, approvals and errors; the protocol is in [docs/protocol.md](docs/protocol.md#websocket-transport-serve---web).
 
 ```sh
-uv run local-agent serve --web                 # a free port, chosen by the system
-uv run local-agent serve --web --port 8765     # a fixed port
+uv run wildcat-code-agent serve --web                 # a free port, chosen by the system
+uv run wildcat-code-agent serve --web --port 8765     # a fixed port
 ```
 
 **Open the web UI.** Start the server and open the line it prints, `Open this link in a browser: http://127.0.0.1:PORT/#token=...`. The page is a chat with streamed replies, tool-call cards, and an approval dialog for each write or command, with the diff (added lines green, removed lines red) and the buttons the agent offers (allow once, allow always for this session, reject). The workspace is the `--cwd` folder. The token is in the link's fragment (after `#`), so the browser never sends it to the server; the page removes it from the address bar and keeps it in memory. Reloading the page needs the printed link again, because the token is new on every start. It was tested in Microsoft Edge; `tests/test_web_browser.py` drives it with Playwright and is skipped where Edge is not installed.
@@ -137,7 +139,7 @@ uv run local-agent serve --web --port 8765     # a fixed port
 - **Address.** The server binds `127.0.0.1` only. There is no option for another address.
 - **Token.** Each start prints a new random token, on stderr, in the line `WebSocket: ws://127.0.0.1:PORT/ws?token=...`. Pass it as the `token` query parameter, or as `Authorization: Bearer <token>`. A missing or wrong token is refused before the connection is accepted. Anyone who has the token can make the agent act as you, so keep it private; it changes on every start.
 - **Origin.** A connection that sends an `Origin` header is accepted only from `http://127.0.0.1:PORT` or `http://localhost:PORT`. A connection with no `Origin` (a script or an editor extension) is accepted if the token is right.
-- **Web UI.** `GET /` serves the page from `src/local_agent/web/` (plain HTML, CSS and JavaScript, no build step). Only files of that folder are served; anything else, and any path with `..`, is a 404. The page has a Content-Security-Policy that allows scripts and styles from this server only. `GET /info` needs the token and returns the workspace folder.
+- **Web UI.** `GET /` serves the page from `src/wildcat_code_agent/web/` (plain HTML, CSS and JavaScript, no build step). Only files of that folder are served; anything else, and any path with `..`, is a 404. The page has a Content-Security-Policy that allows scripts and styles from this server only. `GET /info` needs the token and returns the workspace folder.
 - **Shutdown.** Ctrl+C stops the server. Running turns are cancelled with the same 10 s shared deadline as stdio, then the MCP servers and plugins are closed.
 - **Port.** On Windows the port is opened for this process alone, so another program cannot take a fixed `--port` (it gets an error instead).
 - **Extensions and webviews.** Their origins (`vscode-webview://`, `chrome-extension://`) are refused. Such a client sends the token as `Authorization: Bearer` and no `Origin`.
@@ -149,32 +151,32 @@ The page in the browser also has:
 
 - **Model picker** (header). The choices are the models Ollama has (`ollama list`). Choosing one switches the model of the current chat only; the next message uses it. If the model has no `tools` capability, the page shows a warning, as the terminal does. If Ollama is down, the picker holds the current model and says why.
 - **Sessions** (a column on a wide screen; the Sessions button on a phone). Each chat is saved after its first message, so it is listed with its first message as the title. Choosing one reloads its history on the screen, and the next message continues it. "New chat" starts an empty one in the same folder. "Load more" shows older chats, 50 at a time.
-- **Settings** (Settings button). The editor writes the per-user `config.toml` (or the `--config` file the server was started with). Whole numbers have upper limits (for example `num_ctx` up to 1048576 and `max_output_chars` up to 1000000; the file and the flags use the same limits). The Ollama address can be set here only on this machine (127.0.0.1, localhost or ::1); another address is edited by hand. It edits `model` (the default for new chats), `host`, `num_ctx`, `max_tool_rounds`, `max_output_chars`, `command_timeout_s`, `network_timeout_s` and `tool_profile`. Comments and the layout of the file are kept; a key the agent does not know is refused on load, so the editor never writes one. **The saved settings take effect when local-agent starts again.** The model picker changes the current chat only.
+- **Settings** (Settings button). The editor writes the per-user `config.toml` (or the `--config` file the server was started with). Whole numbers have upper limits (for example `num_ctx` up to 1048576 and `max_output_chars` up to 1000000; the file and the flags use the same limits). The Ollama address can be set here only on this machine (127.0.0.1, localhost or ::1); another address is edited by hand. It edits `model` (the default for new chats), `host`, `num_ctx`, `max_tool_rounds`, `max_output_chars`, `command_timeout_s`, `network_timeout_s` and `tool_profile`. Comments and the layout of the file are kept; a key the agent does not know is refused on load, so the editor never writes one. **The saved settings take effect when wildcat-code-agent starts again.** The model picker changes the current chat only.
 - Not in the settings editor, on purpose: `network_enabled` (it turns on web_fetch), `workspace`, `plugin_dir`, `plugins_enabled`, `disabled_plugins`, `mcp_servers` and `test_command` (they run code or start programs). Edit those by hand in `config.toml`.
 
-**Where chats are saved.** One JSON file per chat in `%APPDATA%\local-agent\sessions\` (the per-user data folder; nothing is written into the install folder). The file holds the folder, the model, the title, the times and the messages the model sees (not the reasoning text). Writes are atomic. A file that cannot be read is skipped with a warning, so the rest of the list still shows. At most 200 chats are kept (the least recently used are deleted, with a warning), and a chat over 5 MiB is not saved. The environment variable `LOCAL_AGENT_DATA_DIR` changes the data folder. A chat whose folder no longer exists is listed but cannot be opened, with a message that says why. The CLI (`local-agent chat`) does not save chats. The protocol is in [docs/protocol.md](docs/protocol.md#saved-sessions).
+**Where chats are saved.** One JSON file per chat in `%APPDATA%\wildcat-code-agent\sessions\` (the per-user data folder; nothing is written into the install folder). The file holds the folder, the model, the title, the times and the messages the model sees (not the reasoning text). Writes are atomic. A file that cannot be read is skipped with a warning, so the rest of the list still shows. At most 200 chats are kept (the least recently used are deleted, with a warning), and a chat over 5 MiB is not saved. The environment variable `WILDCAT_CODE_AGENT_DATA_DIR` changes the data folder. A chat whose folder no longer exists is listed but cannot be opened, with a message that says why. The CLI (`wildcat-code-agent chat`) does not save chats. The protocol is in [docs/protocol.md](docs/protocol.md#saved-sessions).
 
-### Desktop window (`local-agent gui`)
+### Desktop window (`wildcat-code-agent gui`)
 
-`local-agent gui` starts the web server in the same process and opens the same page in a window (pywebview, on the Microsoft Edge WebView2 control). Chat, tool cards, approvals and saved chats work as they do in the browser. Closing the window stops the server and the command exits with code 0.
+`wildcat-code-agent gui` starts the web server in the same process and opens the same page in a window (pywebview, on the Microsoft Edge WebView2 control). Chat, tool cards, approvals and saved chats work as they do in the browser. Closing the window stops the server and the command exits with code 0.
 
 ```powershell
-uv run local-agent gui --cwd C:\src\my-project
+uv run wildcat-code-agent gui --cwd C:\src\my-project
 ```
 
 - **What it needs:** the Microsoft Edge WebView2 runtime. Windows 11 has it, and most Windows 10 installs have it through Edge. If the window does not open, install the runtime from Microsoft (search for "WebView2 runtime"). The error says so.
 - **Flags:** the same settings flags as `chat` (`--model`, `--host`, `--num-ctx`, `--cwd`, `--profile`, `--config`, `--no-plugins`). The workspace defaults to the current folder.
 - **The address:** the window opens the page at `http://127.0.0.1:PORT/#token=...` for one run. The port is free at each start and the token is new on each start. Neither is printed, because the window is the way in. The page itself is served without the token, but `/info` and the WebSocket refuse anything that lacks it.
-- **Installed:** the Start menu entry **local-agent** runs `local-agent-gui.exe` from `C:\Program Files\local-agent\`, with no console window. A Start menu shortcut starts in the program folder, so the window's workspace is your Documents folder instead, and a relative `--cwd` or `--config` given to that exe is resolved against Documents, not the program folder. To work in another folder, edit the shortcut and add `--cwd "C:\src\my-project"` after the target.
+- **Installed:** the Start menu entry **wildcat-code-agent** runs `wildcat-code-agent-gui.exe` from `C:\Program Files\wildcat-code-agent\`, with no console window. A Start menu shortcut starts in the program folder, so the window's workspace is your Documents folder instead, and a relative `--cwd` or `--config` given to that exe is resolved against Documents, not the program folder. To work in another folder, edit the shortcut and add `--cwd "C:\src\my-project"` after the target.
 - **Closing:** closing the window, or pressing Ctrl+C in the console that started `gui`, stops the server and exits with code 0.
 - **Privacy:** the window's WebView2 profile is private (pywebview's `private_mode`, set explicitly): cookies and local storage are not kept between runs. The profile folder is in a temporary location, and a normal close clears it. If the process is killed, a temporary profile folder can remain in `%TEMP%`; it is safe to delete.
-- **Problems:** from a console, the messages go to the console. The windowed program writes its messages to `%APPDATA%\local-agent\gui.log`: each start appends a `--- local-agent gui started ... ---` line first, and a log over 1 MB is moved to `gui.log.1` (one old copy is kept). It also shows a message box when it cannot open the window.
+- **Problems:** from a console, the messages go to the console. The windowed program writes its messages to `%APPDATA%\wildcat-code-agent\gui.log`: each start appends a `--- wildcat-code-agent gui started ... ---` line first, and a log over 1 MB is moved to `gui.log.1` (one old copy is kept). It also shows a message box when it cannot open the window.
 
-Status: tested on Windows 11 with Python 3.14 (pywebview 6.2.1, pythonnet 3.2.1); the frozen build was run on the same machine, and the installer compiles (it was not installed here). Only Windows is supported for the window; on other systems `local-agent serve --web` and a browser do the same job.
+Status: tested on Windows 11 with Python 3.14 (pywebview 6.2.1, pythonnet 3.2.1); the frozen build was run on the same machine, and the installer compiles (it was not installed here). Only Windows is supported for the window; on other systems `wildcat-code-agent serve --web` and a browser do the same job.
 
 ### VS Code extension (development)
 
-The extension in `extensions/vscode/` opens a chat panel in VS Code. The panel is the same web UI (the bundle in `src/local_agent/web/`), and it talks to `local-agent serve --stdio` through the extension host instead of a WebSocket. Approvals work the same way: a write shows the diff and waits for your answer.
+The extension in `extensions/vscode/` opens a chat panel in VS Code. The panel is the same web UI (the bundle in `src/wildcat_code_agent/web/`), and it talks to `wildcat-code-agent serve --stdio` through the extension host instead of a WebSocket. Approvals work the same way: a write shows the diff and waits for your answer.
 
 Build and run it from the repo (Node 26 and npm, and `uv`):
 
@@ -186,12 +188,12 @@ npm test                  # the extension's own tests (no VS Code needed)
 npm run test:e2e          # starts VS Code with the extension and checks the panel (set VSCODE_PATH to Code.exe)
 ```
 
-To try the panel, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **local-agent: Open chat** from the Command Palette.
+To try the panel, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **wildcat-code-agent: Open chat** from the Command Palette.
 
-- **Which agent runs:** the setting `localAgent.command` (an array; default `["local-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. The command is spawned without a shell (`shell: false`), so the first item must be an `.exe` on PATH or a full path; a `.cmd` or `.bat` shim will not start. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\local-agent", "local-agent"]`. Reload the window after a change.
+- **Which agent runs:** the setting `wildcatCodeAgent.command` (an array; default `["wildcat-code-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. The command is spawned without a shell (`shell: false`), so the first item must be an `.exe` on PATH or a full path; a `.cmd` or `.bat` shim will not start. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\wildcat-code-agent", "wildcat-code-agent"]`. Reload the window after a change.
 - **Folder:** the panel works in the first workspace folder. With no folder open, it says so and does not start the agent.
-- **Logs:** the output channel **local-agent** shows the command line and the agent's stderr.
-- **Editor tools (T20):** in the panel, the agent's file and command tools run in the editor. `read_file` returns the text of an open file as it is in the editor, unsaved changes included. `write_file` and `edit_file` show the diff in the approval dialog, then change the open file as an edit, so **Ctrl+Z** (the editor's undo) reverts it while the file is open. A file the agent changes is saved when it had no unsaved changes of yours; if it had, the change stays unsaved and the agent is told to ask you to save. Undo after a save brings back the text in the editor, and the disk keeps the agent's text until you save. `run_command` and `run_tests` run in a VS Code terminal named **local-agent**, and the output (stdout and stderr together) goes back to the agent. The terminal is a pseudoterminal, not a shell: it has no input, no colours and no shell profile. A browser or CLI session keeps the agent's own tools. Details: `docs/protocol.md`, "Client methods".
+- **Logs:** the output channel **wildcat-code-agent** shows the command line and the agent's stderr.
+- **Editor tools (T20):** in the panel, the agent's file and command tools run in the editor. `read_file` returns the text of an open file as it is in the editor, unsaved changes included. `write_file` and `edit_file` show the diff in the approval dialog, then change the open file as an edit, so **Ctrl+Z** (the editor's undo) reverts it while the file is open. A file the agent changes is saved when it had no unsaved changes of yours; if it had, the change stays unsaved and the agent is told to ask you to save. Undo after a save brings back the text in the editor, and the disk keeps the agent's text until you save. `run_command` and `run_tests` run in a VS Code terminal named **wildcat-code-agent**, and the output (stdout and stderr together) goes back to the agent. The terminal is a pseudoterminal, not a shell: it has no input, no colours and no shell profile. A browser or CLI session keeps the agent's own tools. Details: `docs/protocol.md`, "Client methods".
 - **Not yet:** packaging (`vsce package`, a `.vsix` that uses the PATH command) is T22; the editor context (selection, `@file`, diagnostics) is T21. Saved chats and settings work through the same server.
 
 ## Configuration
@@ -203,12 +205,12 @@ Settings come from four places, highest priority first:
 3. **The config file** (TOML), described below.
 4. **Built-in defaults**.
 
-**Config file location.** The file is `config.toml` in the per-user application config folder. On Windows that is `%APPDATA%\local-agent\config.toml`, which for this account is `C:\Users\<you>\AppData\Roaming\local-agent\config.toml`. The folder is not created for you; create the file yourself. A missing file means defaults. `--config PATH` reads a different file, and that file must exist.
+**Config file location.** The file is `config.toml` in the per-user application config folder. On Windows that is `%APPDATA%\wildcat-code-agent\config.toml`, which for this account is `C:\Users\<you>\AppData\Roaming\wildcat-code-agent\config.toml`. The folder is not created for you; create the file yourself. A missing file means defaults. `--config PATH` reads a different file, and that file must exist.
 
 Example:
 
 ```toml
-# %APPDATA%\local-agent\config.toml
+# %APPDATA%\wildcat-code-agent\config.toml
 model = "qwen3-vl:8b"
 host = "http://127.0.0.1:11434"
 num_ctx = 8192
@@ -294,12 +296,12 @@ The official `mcp` Python SDK (2.x) does the protocol work. It negotiates the pr
 
 Plugins add tools without changing the agent's code. They are loaded once at startup, after the built-in tools and before the MCP servers. There are two sources.
 
-**1. The tools folder.** Put a `*.py` file in `%APPDATA%\local-agent\tools\` (the per-user config folder plus `tools`; `plugin_dir` in the config changes it). The folder is not created for you. Only `*.py` files directly in it are loaded (not subfolders, and not files whose name starts with `_`). Each file is one plugin, named by its file name without `.py`. Its `@tool` functions are registered exactly like the built-in tools.
+**1. The tools folder.** Put a `*.py` file in `%APPDATA%\wildcat-code-agent\tools\` (the per-user config folder plus `tools`; `plugin_dir` in the config changes it). The folder is not created for you. Only `*.py` files directly in it are loaded (not subfolders, and not files whose name starts with `_`). Each file is one plugin, named by its file name without `.py`. Its `@tool` functions are registered exactly like the built-in tools.
 
-Adding a tool is one decorated function. This file is `%APPDATA%\local-agent\tools\word_count.py`:
+Adding a tool is one decorated function. This file is `%APPDATA%\wildcat-code-agent\tools\word_count.py`:
 
 ```python
-from local_agent.plugin import Risk, tool
+from wildcat_code_agent.plugin import Risk, tool
 
 
 @tool(risk=Risk.READ)
@@ -314,9 +316,9 @@ And a test for it. Keep a copy of the file in the repository (for example `tests
 # tests/test_word_count.py
 from pathlib import Path
 
-from local_agent.config import Settings
-from local_agent.tools.plugins import load_plugins
-from local_agent.tools.registry import REGISTRY
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.tools.plugins import load_plugins
+from wildcat_code_agent.tools.registry import REGISTRY
 
 PLUGIN_FOLDER = Path(__file__).parent / "word_plugin"  # holds word_count.py
 
@@ -337,14 +339,14 @@ The test suite also has an autouse fixture (`tests/conftest.py`) that restores t
 **Helper files.** A file whose name starts with `_` is not a plugin, but a plugin can import it with a relative import, so plugins in the folder can share code:
 
 ```python
-# %APPDATA%\local-agent\tools\_text_utils.py  (not loaded as a plugin)
+# %APPDATA%\wildcat-code-agent\tools\_text_utils.py  (not loaded as a plugin)
 def shout(text: str) -> str:
     return text.upper()
 ```
 
 ```python
-# %APPDATA%\local-agent\tools\loud.py
-from local_agent.plugin import Risk, tool
+# %APPDATA%\wildcat-code-agent\tools\loud.py
+from wildcat_code_agent.plugin import Risk, tool
 from . import _text_utils
 
 
@@ -354,19 +356,19 @@ def shout(text: str) -> str:
     return _text_utils.shout(text)
 ```
 
-Use relative imports (`from . import _helper`) and names that start with `_` for helpers. Absolute imports of a helper by its file name do not work. Each load gets its own `local_agent_plugins` package, so two plugin folders in one process do not share helpers.
+Use relative imports (`from . import _helper`) and names that start with `_` for helpers. Absolute imports of a helper by its file name do not work. Each load gets its own `wildcat_code_agent_plugins` package, so two plugin folders in one process do not share helpers.
 
-**2. Entry points.** A package can install plugins with the entry point group `local_agent.tools`. The entry point's value names a module, and importing that module registers its `@tool` functions:
+**2. Entry points.** A package can install plugins with the entry point group `wildcat_code_agent.tools`. The entry point's value names a module, and importing that module registers its `@tool` functions:
 
 ```toml
 # pyproject.toml of the package that provides the tools
-[project.entry-points."local_agent.tools"]
+[project.entry-points."wildcat_code_agent.tools"]
 my_tools = "my_package.tools"
 ```
 
 Entry points are loaded sorted by name, after the folder. A module that was already imported by other code in this process is not run again, so its tools are not registered; the loader warns when a plugin registers no tools. An entry point that names a function or attribute (`module:function`) is not supported: it must name a module. It is refused before anything is imported, so it registers nothing and does not affect the module's other entry point.
 
-**Public API.** Import from `local_agent.plugin` only; the rest of the package is internal and may change.
+**Public API.** Import from `wildcat_code_agent.plugin` only; the rest of the package is internal and may change.
 
 - `tool(risk=..., ...)`: the same decorator as the built-in tools (see Adding a tool). `risk` is required.
 - `Risk`: `READ`, `WRITE`, `EXEC`, `NETWORK`.
@@ -389,9 +391,9 @@ Entry points are loaded sorted by name, after the folder. A module that was alre
 ## Project layout
 
 ```
-src/local_agent/
+src/wildcat_code_agent/
   __init__.py          # main() entry point: subcommands chat, serve --stdio, serve --web, gui; parses flags, loads settings, changes into the workspace
-  __main__.py          # python -m local_agent
+  __main__.py          # python -m wildcat_code_agent
   frontends/server.py  # ACP over JSON-RPC lines (StdioServer: sessions, prompt turns on a worker thread, permission requests); serve --stdio; the start-up shared with --web
   frontends/web.py     # serve --web: FastAPI and uvicorn on 127.0.0.1; a WebSocket per connection running a StdioServer; token and Origin checks
   frontends/webassets.py # the web UI's static files: the folder, the path rules, the Content-Security-Policy
@@ -410,7 +412,7 @@ src/local_agent/
   mcp_hub.py           # MCP client runtime: stdio servers on one background thread with its own asyncio loop
   tools/registry.py    # @tool decorator (risk, paths=), add_tool (explicit schema), JSON schema from type hints, Tool objects, ToolContext
   tools/mcp_tools.py   # MCP servers' tools: <server>__<tool> names, risk tiers from the config, results as text
-  tools/plugins.py     # plugin loading: the tools folder and the local_agent.tools entry points; roll back and warn per plugin
+  tools/plugins.py     # plugin loading: the tools folder and the wildcat_code_agent.tools entry points; roll back and warn per plugin
   plugin.py            # the public API for plugin authors: tool, Risk, ToolContext, ToolCancelled, Preview
   tools/__init__.py    # TOOLS: the registered tools (imports the built-ins)
   tools/builtin.py     # read_file (read), write_file (write), run_command and run_tests (exec; cmd by default, or PowerShell)
@@ -448,16 +450,16 @@ tests/
   test_cli_mcp.py      # REPL with MCP servers: start-up warnings, argument preview, stop at exit and at Ctrl+C
   test_plugins.py      # plugin folder and entry points, failure isolation and rollback, name clashes, risk, switches, the plugin-folder write guard
   plugins/             # sample plugin files used by test_plugins.py (sample_plugin.py, entry_sample.py)
-  test_frozen_exe.py   # the built local-agent.exe: --help and serve --stdio initialize; skipped unless the exe is built
+  test_frozen_exe.py   # the built wildcat-code-agent.exe: --help and serve --stdio initialize; skipped unless the exe is built
   test_release_workflow.py  # release.yml read as YAML: triggers, permissions, tag check, pinned actions
 packaging/
-  build.ps1            # builds dist\local-agent\local-agent.exe (uv sync --locked, then PyInstaller)
-  local-agent.spec     # PyInstaller spec: --onedir, console app, hidden imports and package metadata
-  launcher.py          # the script PyInstaller freezes; calls the same main() as the local-agent script
+  build.ps1            # builds dist\wildcat-code-agent\wildcat-code-agent.exe (uv sync --locked, then PyInstaller)
+  wildcat-code-agent.spec     # PyInstaller spec: --onedir, console app, hidden imports and package metadata
+  launcher.py          # the script PyInstaller freezes; calls the same main() as the wildcat-code-agent script
   smoke-exe.ps1        # smoke test of the built exe: --help, a serve --stdio run with a smoke plugin, standard-library imports
   smoke/smoke_stdlib.py  # the plugin smoke-exe.ps1 copies into a temp folder
-  local-agent.iss      # Inno Setup 6 script for the installer; build-installer.ps1 compiles it
-  build-installer.ps1  # builds dist\installer\local-agent-<version>-setup.exe
+  wildcat-code-agent.iss      # Inno Setup 6 script for the installer; build-installer.ps1 compiles it
+  build-installer.ps1  # builds dist\installer\wildcat-code-agent-<version>-setup.exe
 .github/workflows/ci.yml       # pytest on windows-latest, every push to main and every pull request
 .github/workflows/release.yml  # build, test and package on windows-latest; publishes a GitHub Release for version tags
 ```
@@ -481,11 +483,11 @@ Thinking text is kept in the assistant message in history, and it counts toward 
 A tool is one decorated function. A tool can live in the repository (below) or in a plugin file (see Plugins). Its docstring becomes the description the model sees, and type hints become the JSON schema:
 
 ```python
-# src/local_agent/tools/builtin.py (or any module imported by tools/__init__.py)
+# src/wildcat_code_agent/tools/builtin.py (or any module imported by tools/__init__.py)
 from typing import Annotated
 
-from local_agent.permissions import Risk
-from local_agent.tools.registry import tool
+from wildcat_code_agent.permissions import Risk
+from wildcat_code_agent.tools.registry import tool
 
 
 @tool(risk=Risk.READ)
@@ -499,14 +501,14 @@ def count_lines(path: Annotated[str, "File to count"]) -> str:
 - Keep the docstring to one or two short sentences: it is sent with every request, and small models lose track of long schemas.
 - `paths=("path",)`: names the parameters that are file paths (each must be a `str`, or `str | None` when optional). The core resolves them against the workspace before the tool runs, asks separately for a path outside it, and passes the tool the resolved absolute path. Do not check paths inside the tool.
 - For risky tools, add `approval_title=` (a function returning the question, for example `"Write 12 chars to 'a.txt'"`) and `preview=` (a function returning a `Preview` shown before approval). Both receive the tool's arguments by name. `denied_message=` is what the model receives when the user says no.
-- A tool that needs a limit from the settings declares `context: ToolContext` as a parameter (from `local_agent.tools.registry`). The core fills it in; the model never sees it. `ToolContext.command_timeout_s` and `ToolContext.max_output_chars` are the current values.
+- A tool that needs a limit from the settings declares `context: ToolContext` as a parameter (from `wildcat_code_agent.tools.registry`). The core fills it in; the model never sees it. `ToolContext.command_timeout_s` and `ToolContext.max_output_chars` are the current values.
 - Supported parameter types: `str`, `int`, `float`, `bool`, `list[T]`, `dict`, and `X | None` for optional parameters. Parameters without a default are required. Use `Annotated[str, "description"]` to describe a parameter.
 - Tools must not `print` or call `input`. Return a string; raised exceptions go back to the model as an error message.
 - Add a test next to `tests/test_registry.py` or `tests/test_approval.py` that checks the schema and, for risky tools, the approval flow.
 
 ## Building the Windows executable
 
-`packaging\build.ps1` builds `local-agent.exe` with PyInstaller, in `--onedir` mode. Run it from the repo root (or from anywhere). Close any running `local-agent` that was started from the repo's venv (`.venv\Scripts\local-agent.exe`) first: Windows locks it, and the build's `uv sync` then fails with "being used by another process".
+`packaging\build.ps1` builds `wildcat-code-agent.exe` with PyInstaller, in `--onedir` mode. Run it from the repo root (or from anywhere). Close any running `wildcat-code-agent` that was started from the repo's venv (`.venv\Scripts\wildcat-code-agent.exe`) first: Windows locks it, and the build's `uv sync` then fails with "being used by another process".
 
 ```powershell
 packaging\build.ps1
@@ -518,27 +520,27 @@ With Windows PowerShell 5.1 and a restrictive execution policy, run it with the 
 powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-It runs `uv sync --locked`, then PyInstaller with `packaging\local-agent.spec`. The output is the folder `dist\local-agent\`: `local-agent.exe` and an `_internal` folder beside it. Copy that whole folder to run the app elsewhere; the exe needs no Python to run. `build\` is PyInstaller's work folder and can be deleted. Both `build\` and `dist\` are git-ignored.
+It runs `uv sync --locked`, then PyInstaller with `packaging\wildcat-code-agent.spec`. The output is the folder `dist\wildcat-code-agent\`: `wildcat-code-agent.exe` and an `_internal` folder beside it. Copy that whole folder to run the app elsewhere; the exe needs no Python to run. `build\` is PyInstaller's work folder and can be deleted. Both `build\` and `dist\` are git-ignored.
 
-- **Two executables (T18):** `local-agent.exe` (console: chat, `serve`, `gui` from a terminal) and `local-agent-gui.exe` (windowed: `gui` only, for the Start menu), built from one spec into one folder (`MERGE`). Both share `_internal\`. The window needs the pywebview Windows backend: `pythonnet`, `clr_loader`, the WebView2 loader DLLs and `Microsoft.Web.WebView2`; PyInstaller's hooks for them are in `pyinstaller-hooks-contrib`. `packaging\smoke-exe.ps1` checks the subsystem of both exes and that the backend imports.
+- **Two executables (T18):** `wildcat-code-agent.exe` (console: chat, `serve`, `gui` from a terminal) and `wildcat-code-agent-gui.exe` (windowed: `gui` only, for the Start menu), built from one spec into one folder (`MERGE`). Both share `_internal\`. The window needs the pywebview Windows backend: `pythonnet`, `clr_loader`, the WebView2 loader DLLs and `Microsoft.Web.WebView2`; PyInstaller's hooks for them are in `pyinstaller-hooks-contrib`. `packaging\smoke-exe.ps1` checks the subsystem of both exes and that the backend imports.
 - **Size (T12, this machine):** 46.4 MiB in 212 files (48,661,837 bytes), after adding the standard-library modules below.
 - **Python version:** PyInstaller 6.22.3 (a dev dependency) declares Python 3.14 support and builds on the project's Python 3.14, so `requires-python` is unchanged.
-- **Tests against the exe:** `$env:LOCAL_AGENT_EXE = "dist\local-agent\local-agent.exe"; uv run pytest tests\test_frozen_exe.py`. Without an exe, that file is skipped; a plain `uv run pytest` never builds anything.
+- **Tests against the exe:** `$env:WILDCAT_CODE_AGENT_EXE = "dist\wildcat-code-agent\wildcat-code-agent.exe"; uv run pytest tests\test_frozen_exe.py`. Without an exe, that file is skipped; a plain `uv run pytest` never builds anything.
 
 Limitations of the built app:
 
-- **Entry-point plugins are not loaded.** A package installed with a `local_agent.tools` entry point cannot be added to the frozen app. The loader finds none and prints nothing. **File plugins still load:** a `*.py` file in the tools folder can `from local_agent.plugin import tool` and use the standard-library modules bundled in the app. The build lists these extra ones in `hiddenimports` (`packaging\local-agent.spec`): `sqlite3`, `xml.etree.ElementTree`, `xml.dom.minidom`, `unittest`, `csv`, `decimal` and `zipfile`. Other standard-library modules are not guaranteed: a module the build does not bundle fails with a clear per-plugin warning, and the agent runs on without that plugin. Pure-Python modules are sometimes in the bundle without being listed (`colorsys` loaded in the check below), so add a module to `hiddenimports` before relying on it. `tkinter` is excluded. A package that is not standard library (a plugin importing `rich`, for example) is refused with a `ModuleNotFoundError` warning in the same way.
+- **Entry-point plugins are not loaded.** A package installed with a `wildcat_code_agent.tools` entry point cannot be added to the frozen app. The loader finds none and prints nothing. **File plugins still load:** a `*.py` file in the tools folder can `from wildcat_code_agent.plugin import tool` and use the standard-library modules bundled in the app. The build lists these extra ones in `hiddenimports` (`packaging\wildcat-code-agent.spec`): `sqlite3`, `xml.etree.ElementTree`, `xml.dom.minidom`, `unittest`, `csv`, `decimal` and `zipfile`. Other standard-library modules are not guaranteed: a module the build does not bundle fails with a clear per-plugin warning, and the agent runs on without that plugin. Pure-Python modules are sometimes in the bundle without being listed (`colorsys` loaded in the check below), so add a module to `hiddenimports` before relying on it. `tkinter` is excluded. A package that is not standard library (a plugin importing `rich`, for example) is refused with a `ModuleNotFoundError` warning in the same way.
 - **Standard-library DLLs on the build machine.** The build machine's base Python is miniforge/conda (`C:\ProgramData\miniforge3`). Its DLLs for `_ctypes` (`ffi-8.dll`), `_bz2` (`libbz2.dll`), `_lzma` (`liblzma.dll`) and `_sqlite3` (`sqlite3.dll`) are in its `Library\bin` folder, which PyInstaller does not collect here (the build log reports `Library not found`). So on this build, plugins that import `ctypes`, `bz2`, `lzma` or `sqlite3` fail with a warning, even though `sqlite3` is in the list above. A build on a python.org or uv-managed Python (T14 CI) may differ; that is not verified.
-- **The T18 build (this machine, conda):** `local-agent-gui.exe` also needs `ffi-8.dll` (`ctypes`), and the smoke test needs `sqlite3.dll` (`sqlite3`), `libbz2.dll` and `liblzma.dll` (the optional `bz2` and `lzma`) copied from `C:\ProgramData\miniforge3\Library\bin` into `dist\local-agent\_internal\`. Without the copies, the windowed exe stops at import, with no console to show why; it now writes the traceback to `gui.log` and shows a message box (`packaging\gui_launcher.py`).
+- **The T18 build (this machine, conda):** `wildcat-code-agent-gui.exe` also needs `ffi-8.dll` (`ctypes`), and the smoke test needs `sqlite3.dll` (`sqlite3`), `libbz2.dll` and `liblzma.dll` (the optional `bz2` and `lzma`) copied from `C:\ProgramData\miniforge3\Library\bin` into `dist\wildcat-code-agent\_internal\`. Without the copies, the windowed exe stops at import, with no console to show why; it now writes the traceback to `gui.log` and shows a message box (`packaging\gui_launcher.py`).
 - **`ctypes` is now required by the smoke test.** `serve --web` imports it through click (uvicorn's dependency), so an exe without `_ctypes` cannot start the web server. On the conda build machine, copy `ffi-8.dll` into the app's `_internal` folder; with that copy, the reviewer ran `serve --web` and `initialize` succeeded. Without it, `packaging\smoke-exe.ps1` fails at step 4.
 - **MCP servers run the program they name.** `command` is looked up on PATH, so a Python MCP server needs a Python of its own; the exe does not provide one.
 - **Ollama is not included.** It must run as before (see Requirements).
 - **Not signed.** Windows SmartScreen and Defender may warn about an unsigned executable.
-- **State stays per user.** Config, plugins and temp files go to the per-user folders (`%APPDATA%\local-agent`, the system temp folder for MCP stderr). Nothing is written next to the exe.
+- **State stays per user.** Config, plugins and temp files go to the per-user folders (`%APPDATA%\wildcat-code-agent`, the system temp folder for MCP stderr). Nothing is written next to the exe.
 
 ## Building the installer
 
-`packaging\build-installer.ps1` makes `dist\installer\local-agent-<version>-setup.exe` from the T12 build. It builds `dist\local-agent\` first only if that exe is missing (`-Rebuild` forces it), then compiles `packaging\local-agent.iss` with Inno Setup 6. The version comes from `pyproject.toml`. When it reuses an existing `dist\local-agent\`, it prints the exe's build time and warns if any file under `src\` is newer; run it with `-Rebuild` in that case.
+`packaging\build-installer.ps1` makes `dist\installer\wildcat-code-agent-<version>-setup.exe` from the T12 build. It builds `dist\wildcat-code-agent\` first only if that exe is missing (`-Rebuild` forces it), then compiles `packaging\wildcat-code-agent.iss` with Inno Setup 6. The version comes from `pyproject.toml`. When it reuses an existing `dist\wildcat-code-agent\`, it prints the exe's build time and warns if any file under `src\` is newer; run it with `-Rebuild` in that case.
 
 Inno Setup 6 is needed (`ISCC.exe`). The script looks for it in `%ProgramFiles(x86)%\Inno Setup 6\`, `%ProgramFiles%\Inno Setup 6\`, `%LOCALAPPDATA%\Programs\Inno Setup 6\` and on PATH. If it is not found, the script stops and says how to install it:
 
@@ -552,7 +554,7 @@ packaging\build-installer.ps1
 
 ## Releasing
 
-A release is a version tag. `.github/workflows/release.yml` runs on `windows-latest`, builds `local-agent.exe` and the installer, and attaches them to a GitHub Release.
+A release is a version tag. `.github/workflows/release.yml` runs on `windows-latest`, builds `wildcat-code-agent.exe` and the installer, and attaches them to a GitHub Release.
 
 1. Set `version` in `pyproject.toml` (for example `0.2.0`) and merge it to `main`.
 2. Tag that commit as `v` plus the version, and push the tag:
@@ -561,19 +563,19 @@ A release is a version tag. `.github/workflows/release.yml` runs on `windows-lat
    git push origin v0.2.0
    ```
    The tag must equal the `pyproject.toml` version exactly (`v0.2.0` for `0.2.0`). If it does not, the build stops at the "Read the version and check the tag" step and nothing is published.
-3. The workflow runs the tests, builds `dist\local-agent\`, runs the frozen-exe tests and `packaging\smoke-exe.ps1`, builds the installer, and then creates the release.
+3. The workflow runs the tests, builds `dist\wildcat-code-agent\`, runs the frozen-exe tests and `packaging\smoke-exe.ps1`, builds the installer, and then creates the release.
 
 The release has three files:
 
-- `local-agent-<version>-setup.exe`: the machine-wide installer (see "Building the installer").
-- `local-agent-<version>-win-x64.zip`: the app folder, unzipped to `local-agent-<version>-win-x64\` with `local-agent.exe` and `_internal\`. Nothing is installed; run the exe from any folder.
+- `wildcat-code-agent-<version>-setup.exe`: the machine-wide installer (see "Building the installer").
+- `wildcat-code-agent-<version>-win-x64.zip`: the app folder, unzipped to `wildcat-code-agent-<version>-win-x64\` with `wildcat-code-agent.exe` and `_internal\`. Nothing is installed; run the exe from any folder.
 - `SHA256SUMS.txt`: the SHA-256 of both files, in `sha256sum` format. To check a download in Git Bash, run `sha256sum -c SHA256SUMS.txt` in the folder that holds the files. In PowerShell, compare `Get-FileHash <file> -Algorithm SHA256` with the line for that file.
 
 A tag with a suffix, such as `v0.2.0-rc1`, becomes a pre-release. Its `pyproject.toml` version must be the same suffixed string.
 
 **Dry runs (no release, no tag):**
 
-- Open a pull request that changes `packaging/**`, `.github/workflows/release.yml`, `pyproject.toml` or `uv.lock`. The workflow builds, tests and uploads the files as the run's artifact `local-agent-release-<version>` (kept 14 days). The tag check is skipped.
+- Open a pull request that changes `packaging/**`, `.github/workflows/release.yml`, `pyproject.toml` or `uv.lock`. The workflow builds, tests and uploads the files as the run's artifact `wildcat-code-agent-release-<version>` (kept 14 days). The tag check is skipped.
 - Or run the workflow by hand: Actions, Release, Run workflow. It does the same and never publishes, even if the branch selected is a tag.
 
 **Build details:**
@@ -607,7 +609,7 @@ The agent works in one folder, the **workspace**: the folder you start it from, 
   - a path outside the workspace (those always ask, and only `y` or `n` is accepted),
   - a write or edit whose path has a `.git` folder in it (hooks and config, in any case), which asks every time,
   - `git_commit`, which asks every time.
-- **`web_fetch` is the only network tool.** It is off unless `network_enabled = true` is set in the config. When on, it asks every time (no "allow for this session"). It accepts only `http` and `https` URLs without a username or password, makes one plain `GET` per page with no cookies or credentials, and sends the User-Agent `local-agent/<version>`. Redirects are followed by hand (at most 5, each target checked), the body is read up to 2 MB, and `network_timeout_s` is a limit on the whole fetch, redirects included, as well as on each connect or read. A redirect from a public host to a local or private address (`localhost`, a loopback, private, link-local or similar IP address, or a name with no dot) is refused; the model is told to call `web_fetch` with that URL, so the user is asked. Such a fetch is labelled "local/private address" in the approval, and the approval shows a note. Proxy settings from the environment are used, except for `localhost` and loopback addresses, which are always reached directly. Host names are not resolved, so a public name that points at a private address is not caught. The page's text reaches the model, so a fetched page can try to steer it: read the URL before answering `y`.
+- **`web_fetch` is the only network tool.** It is off unless `network_enabled = true` is set in the config. When on, it asks every time (no "allow for this session"). It accepts only `http` and `https` URLs without a username or password, makes one plain `GET` per page with no cookies or credentials, and sends the User-Agent `wildcat-code-agent/<version>`. Redirects are followed by hand (at most 5, each target checked), the body is read up to 2 MB, and `network_timeout_s` is a limit on the whole fetch, redirects included, as well as on each connect or read. A redirect from a public host to a local or private address (`localhost`, a loopback, private, link-local or similar IP address, or a name with no dot) is refused; the model is told to call `web_fetch` with that URL, so the user is asked. Such a fetch is labelled "local/private address" in the approval, and the approval shows a note. Proxy settings from the environment are used, except for `localhost` and loopback addresses, which are always reached directly. Host names are not resolved, so a public name that points at a private address is not caught. The page's text reaches the model, so a fetched page can try to steer it: read the URL before answering `y`.
 - **MCP tools** run in their server's own process, so the workspace and path rules do not cover them. Each call asks first (exec tier by default), and its preview shows the server, the tool and the arguments. Only the server's tier decides whether it asks: a server or tool set to `read` runs without a question, so set `read` only for servers you trust.
 - **Not detected**: a hard link inside the workspace that points at a file outside it looks like an inside path. A file swapped for a link after the check is a race that is not closed.
 Windows path cases are covered by `tests/test_sandbox.py`: case and drive-letter case, `C:foo`, `\foo`, UNC, `\\?\` and `\\?\UNC\`, 8.3 short names, junctions (created with `mklink /J` in the test; skipped with a reason if that is not allowed), prefix tricks such as `work-evil` next to `work`, and symlinks (skipped here: Windows refused to create one without Developer Mode or admin).

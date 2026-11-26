@@ -24,11 +24,11 @@ jobs:
         run: uv run --locked pytest --ignore=tests/test_gui_window.py
 
       # Non-blocking: learns whether the pywebview window works on windows-latest. It skips when no
-      # desktop or WebView2 runtime is there; LOCAL_AGENT_REQUIRE_WINDOW=1 makes a missing backend a failure.
+      # desktop or WebView2 runtime is there; WILDCAT_CODE_AGENT_REQUIRE_WINDOW=1 makes a missing backend a failure.
       - name: Real window test (non-blocking)
         continue-on-error: true
         env:
-          LOCAL_AGENT_REQUIRE_WINDOW: "1"
+          WILDCAT_CODE_AGENT_REQUIRE_WINDOW: "1"
         run: uv run --locked pytest tests/test_gui_window.py -v
 
   # The VS Code extension (T19): TypeScript compile and the node tests. The tests do not start VS Code.

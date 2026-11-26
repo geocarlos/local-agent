@@ -1,6 +1,6 @@
-"""Entry script for the PyInstaller build. It calls the same `main` as the `local-agent` console script."""
+"""Entry script for the PyInstaller build. It calls the same `main` as the `wildcat-code-agent` console script."""
 
-from local_agent import main
+from wildcat_code_agent import main
 
 if __name__ == "__main__":
     main()

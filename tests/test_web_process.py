@@ -1,4 +1,4 @@
-"""The real web server (T15): `python -m local_agent serve --web` as a subprocess, with uvicorn and a real
+"""The real web server (T15): `python -m wildcat_code_agent serve --web` as a subprocess, with uvicorn and a real
 WebSocket client, against an unreachable Ollama.
 
 Proves the start-up line carries the URL and token, a missing, wrong or foreign-origin client is refused
@@ -24,7 +24,7 @@ def _start(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text("", encoding="utf-8")  # the user's own config is never read
     proc = subprocess.Popen(
-        [sys.executable, "-m", "local_agent", "serve", "--web", "--port", "0", "--no-plugins",
+        [sys.executable, "-m", "wildcat_code_agent", "serve", "--web", "--port", "0", "--no-plugins",
          "--host", "http://127.0.0.1:1", "--config", str(config), "--cwd", str(tmp_path)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
@@ -87,7 +87,7 @@ def test_the_web_server_refuses_bad_clients_and_serves_a_real_client(tmp_path):
 
 
 def test_a_line_over_the_character_limit_gets_32600_and_the_socket_stays_open(tmp_path):
-    from local_agent.frontends.server import MAX_LINE_CHARS
+    from wildcat_code_agent.frontends.server import MAX_LINE_CHARS
 
     proc, port, token, lines, watchdog, reader = _start(tmp_path)
     try:

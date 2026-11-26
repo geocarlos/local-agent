@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 from fakes import FakeOllama, text_reply, tool_reply
-from local_agent import config, sessions
-from local_agent.config import Settings
-from local_agent.frontends import server as acp
-from local_agent.frontends.server import EXT_MODELS, EXT_SETTINGS_GET, EXT_SETTINGS_SET
-from local_agent.sessions import SessionStore
+from wildcat_code_agent import config, sessions
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import server as acp
+from wildcat_code_agent.frontends.server import EXT_MODELS, EXT_SETTINGS_GET, EXT_SETTINGS_SET
+from wildcat_code_agent.sessions import SessionStore
 from test_server import Wire, initialize, new_session, prompt, updates
 
 INVALID_PARAMS = -32602

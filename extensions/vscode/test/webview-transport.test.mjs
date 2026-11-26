@@ -2,7 +2,7 @@
 // and a fake window. The bundle file is plain ES module JavaScript (no DOM at import time).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { connectHostLink } from "../../../src/local_agent/web/js/transport.js";
+import { connectHostLink } from "../../../src/wildcat_code_agent/web/js/transport.js";
 
 function fakeWindow() {
   const listeners = new Set();

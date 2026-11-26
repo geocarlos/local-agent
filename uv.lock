@@ -407,51 +407,6 @@ wheels = [
 ]
 
 [[package]]
-name = "local-agent"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "mcp" },
-    { name = "ollama" },
-    { name = "platformdirs" },
-    { name = "pywebview" },
-    { name = "tomlkit" },
-    { name = "uvicorn" },
-    { name = "websockets" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "playwright" },
-    { name = "pyinstaller" },
-    { name = "pytest" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.165.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mcp", specifier = ">=2.3.0" },
-    { name = "ollama", specifier = ">=0.6.3" },
-    { name = "platformdirs", specifier = ">=4.14.8" },
-    { name = "pywebview", specifier = ">=6.2.1" },
-    { name = "tomlkit", specifier = ">=0.15.3" },
-    { name = "uvicorn", specifier = ">=0.54.0" },
-    { name = "websockets", specifier = ">=17.4" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "playwright", specifier = ">=1.65.2" },
-    { name = "pyinstaller", specifier = ">=6.22.3" },
-    { name = "pytest", specifier = ">=9.2.0" },
-    { name = "pyyaml", specifier = ">=6.0.4" },
-]
-
-[[package]]
 name = "macholib"
 version = "1.16.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1223,4 +1178,49 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/53/8f37a3943517bba77fc86f7c4162c455018c5b6d760c5e9c9a11de9e37f7/websockets-17.4-cp315-cp315t-win_amd64.whl", hash = "sha256:6e6558efbb256b532c9f06a21ba42bcac729718e365c505819f181f25e5c0eca", size = 219195, upload-time = "2026-10-30T15:10:12.336Z" },
     { url = "https://files.pythonhosted.org/packages/69/35/cf33cba7248fcd80cfe5911ffe67aa2637f50c2bfaada123b1e9d2aeca90/websockets-17.4-cp315-cp315t-win_arm64.whl", hash = "sha256:fcac44d917672ad6257ad64b80b5168306f168a78cab5c0612e4c699caed18cf", size = 219117, upload-time = "2026-10-30T15:10:13.771Z" },
     { url = "https://files.pythonhosted.org/packages/eb/27/9db924cb0dbf22eade78d98fbae77790f9bf6bc729e6ab29aef9d68e4156/websockets-17.4-py3-none-any.whl", hash = "sha256:c6bd2c9781915592b209160d0f017d4c7c82ad53075e6b0c24d2a89299e7f9e9", size = 212900, upload-time = "2026-10-30T15:10:34.482Z" },
+]
+
+[[package]]
+name = "wildcat-code-agent"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "ollama" },
+    { name = "platformdirs" },
+    { name = "pywebview" },
+    { name = "tomlkit" },
+    { name = "uvicorn" },
+    { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "playwright" },
+    { name = "pyinstaller" },
+    { name = "pytest" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.165.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mcp", specifier = ">=2.3.0" },
+    { name = "ollama", specifier = ">=0.6.3" },
+    { name = "platformdirs", specifier = ">=4.14.8" },
+    { name = "pywebview", specifier = ">=6.2.1" },
+    { name = "tomlkit", specifier = ">=0.15.3" },
+    { name = "uvicorn", specifier = ">=0.54.0" },
+    { name = "websockets", specifier = ">=17.4" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "playwright", specifier = ">=1.65.2" },
+    { name = "pyinstaller", specifier = ">=6.22.3" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "pyyaml", specifier = ">=6.0.4" },
 ]

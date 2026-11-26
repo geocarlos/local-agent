@@ -8,7 +8,7 @@ Two cases, each showing a real window for a few seconds:
   waits for the child to exit. The child is killed by its handle if it does not exit in time.
 
 Skip or fail? A missing desktop session (no pywebview or pythonnet, no WebView2 runtime, no window) skips the test,
-unless the environment variable LOCAL_AGENT_REQUIRE_WINDOW is 1: then it fails. A window that opens and does not
+unless the environment variable WILDCAT_CODE_AGENT_REQUIRE_WINDOW is 1: then it fails. A window that opens and does not
 behave (the page never connects, or Ctrl+C does not close it) fails in every case: that is a real bug.
 """
 
@@ -24,12 +24,12 @@ from pathlib import Path
 import pytest
 
 from fakes import FakeOllama
-from local_agent.config import Settings
-from local_agent.frontends import gui
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import gui
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="the desktop window test runs on Windows only")
 
-REQUIRE_WINDOW = os.environ.get("LOCAL_AGENT_REQUIRE_WINDOW") == "1"
+REQUIRE_WINDOW = os.environ.get("WILDCAT_CODE_AGENT_REQUIRE_WINDOW") == "1"
 CONNECT_WAIT_S = 45
 CHILD_READY_WAIT_S = 60
 CHILD_EXIT_WAIT_S = 60
@@ -47,8 +47,8 @@ CHILD = """
 import sys
 from functools import partial
 from pathlib import Path
-from local_agent.config import Settings
-from local_agent.frontends import gui
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import gui
 
 folder = Path(sys.argv[1])
 
@@ -63,7 +63,7 @@ sys.exit(code)
 
 
 def _unavailable(reason: str) -> None:
-    """Skip, or fail when LOCAL_AGENT_REQUIRE_WINDOW=1 (a CI job that must have a desktop)."""
+    """Skip, or fail when WILDCAT_CODE_AGENT_REQUIRE_WINDOW=1 (a CI job that must have a desktop)."""
     if REQUIRE_WINDOW:
         pytest.fail(f"the window backend or desktop is required here: {reason}")
     pytest.skip(reason)
@@ -129,7 +129,7 @@ def test_the_window_opens_the_page_and_the_page_connects(tmp_path):
     assert "error" not in seen, seen
     assert code == 0, errors.getvalue()
     assert seen["status"] == "Connected", seen
-    assert seen["title"] == "local-agent", seen
+    assert seen["title"] == "Wildcat Code Agent", seen
     assert Path(seen["workspace"]).resolve() == tmp_path.resolve(), seen
     assert seen["prompt_enabled"] is True, seen
     assert seen["has_fragment"] in ("", None), seen  # the page removed the token from the address bar

@@ -11,9 +11,9 @@ import time
 from pathlib import Path
 
 from fakes import text_reply, tool_reply
-from local_agent.client_tools import NOT_FOUND
-from local_agent.config import Settings
-from local_agent.frontends import server as server_module
+from wildcat_code_agent.client_tools import NOT_FOUND
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import server as server_module
 from test_server import TIMEOUT, Wire, assert_tool_calls_answered, cancel_now, new_session, updates
 
 ALL_CAPS = {"fs": {"readTextFile": True, "writeTextFile": True}, "terminal": True}

@@ -4,7 +4,7 @@
   {type: "send", text} writes one line to the agent's stdin;
 - host -> webview: each line the agent writes to stdout comes back as {type: "message", text}.
 
-The agent is a real `local-agent serve --stdio` process with the scripted model (tests/fake_ollama_http.py).
+The agent is a real `wildcat-code-agent serve --stdio` process with the scripted model (tests/fake_ollama_http.py).
 The TypeScript side of the host (the spawn and the framing) is tested by `npm test` in extensions/vscode.
 
 The page is served the way the extension serves it (extensions/vscode/src/webviewHtml.ts): the same
@@ -31,7 +31,7 @@ from test_web_browser import ORIGINAL, EDITED, TIMEOUT_MS, edge  # noqa: F401 (t
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 
-BUNDLE = Path(__file__).resolve().parents[1] / "src" / "local_agent" / "web"
+BUNDLE = Path(__file__).resolve().parents[1] / "src" / "wildcat_code_agent" / "web"
 PAGE_URL = "https://webview.test/index.html"
 CSP_SOURCE = "https://webview.test"  # stands in for webview.cspSource
 SHIM = """
@@ -49,7 +49,7 @@ def agent(tmp_path):
     config.write_text("", encoding="utf-8")  # the user's own config is never read
     fake, fake_url = start_fake_ollama()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "local_agent", "serve", "--stdio", "--no-plugins",
+        [sys.executable, "-m", "wildcat_code_agent", "serve", "--stdio", "--no-plugins",
          "--host", fake_url, "--config", str(config), "--cwd", str(workspace)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )

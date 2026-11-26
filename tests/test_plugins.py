@@ -8,15 +8,15 @@ from pathlib import Path
 import pytest
 
 from fakes import FakeOllama, text_reply, tool_reply
-from local_agent import config
-from local_agent.config import ConfigError, Settings, load_settings
-from local_agent.core import loop
-from local_agent.core.events import Decision
-from local_agent.frontends import cli
-from local_agent.permissions import SessionApprovals
-from local_agent.tools import mcp_tools, profiles
-from local_agent.tools.plugins import ENTRY_POINT_GROUP, describe_loaded, load_plugins
-from local_agent.tools.registry import REGISTRY
+from wildcat_code_agent import config
+from wildcat_code_agent.config import ConfigError, Settings, load_settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import Decision
+from wildcat_code_agent.frontends import cli
+from wildcat_code_agent.permissions import SessionApprovals
+from wildcat_code_agent.tools import mcp_tools, profiles
+from wildcat_code_agent.tools.plugins import ENTRY_POINT_GROUP, describe_loaded, load_plugins
+from wildcat_code_agent.tools.registry import REGISTRY
 
 SAMPLE = Path(__file__).parent / "plugin_fixtures" / "sample_plugin.py"
 ENTRY_SAMPLE = "plugin_fixtures.entry_sample"
@@ -134,7 +134,7 @@ def test_plugin_path_parameters_get_the_workspace_sandbox(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "peek.py", """
         from pathlib import Path
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ, paths=("path",))
         def peek(path: str) -> str:
@@ -238,7 +238,7 @@ def test_a_plugin_file_and_an_entry_point_both_load_in_order(monkeypatch, tmp_pa
 def test_broken_plugins_warn_and_the_others_still_load(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "a_good.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def good_one(text: str) -> str:
@@ -246,9 +246,9 @@ def test_broken_plugins_warn_and_the_others_still_load(tmp_path):
             return text
     """)
     _write(folder, "b_syntax.py", "def broken(:\n    pass\n")
-    _write(folder, "c_import.py", "import local_agent_no_such_module_for_tests\n")
+    _write(folder, "c_import.py", "import wildcat_code_agent_no_such_module_for_tests\n")
     _write(folder, "d_raises.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def d_registered(text: str) -> str:
@@ -258,14 +258,14 @@ def test_broken_plugins_warn_and_the_others_still_load(tmp_path):
         raise RuntimeError("boom after registering")
     """)
     _write(folder, "e_invalid.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def no_docstring(text: str) -> str:
             return text
     """)
     _write(folder, "f_good.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def good_two(text: str) -> str:
@@ -293,7 +293,7 @@ def test_a_plugin_that_fails_leaves_no_half_loaded_module_behind(tmp_path):
 
     load_plugins(_settings(folder, _workspace(tmp_path)))
 
-    assert "local_agent_plugins.bad" not in sys.modules
+    assert "wildcat_code_agent_plugins.bad" not in sys.modules
 
 
 def test_warning_text_from_a_plugin_is_escaped(tmp_path):
@@ -333,7 +333,7 @@ def test_a_missing_plugin_folder_is_not_an_error_and_is_not_created(tmp_path):
 def test_a_plugin_cannot_replace_a_built_in_tool(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "clash.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def read_file(path: str) -> str:
@@ -358,7 +358,7 @@ def test_a_plugin_cannot_replace_a_built_in_tool(tmp_path):
 def test_two_plugins_with_the_same_tool_name_keep_the_first(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "a_first.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def shared_tool(text: str) -> str:
@@ -366,7 +366,7 @@ def test_two_plugins_with_the_same_tool_name_keep_the_first(tmp_path):
             return "first"
     """)
     _write(folder, "b_second.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def shared_tool(text: str) -> str:
@@ -381,7 +381,7 @@ def test_two_plugins_with_the_same_tool_name_keep_the_first(tmp_path):
 
     runtime = load_plugins(_settings(folder, _workspace(tmp_path)))
 
-    assert REGISTRY["shared_tool"].fn.__module__ == "local_agent_plugins.a_first"
+    assert REGISTRY["shared_tool"].fn.__module__ == "wildcat_code_agent_plugins.a_first"
     assert REGISTRY["shared_tool"].call({"text": "x"}) == "first"
     assert "b_own" in REGISTRY
     assert [p.name for p in runtime.loaded] == ["a_first", "b_second"]
@@ -431,7 +431,7 @@ def test_only_the_disabled_plugin_is_skipped(tmp_path):
     folder = _folder(tmp_path)
     (folder / "sample_plugin.py").write_bytes(SAMPLE.read_bytes())
     _write(folder, "other.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def other_tool(text: str) -> str:
@@ -475,7 +475,7 @@ def test_the_repl_loads_plugins_and_says_so_once(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "[plugins] loaded: sample_plugin (2 tools)" in out
-    assert out.index("[plugins]") < out.index("Local Agent ready")
+    assert out.index("[plugins]") < out.index("Wildcat Code Agent ready")
     assert "sample_count_words" not in REGISTRY  # removed when the REPL exits
 
 
@@ -498,7 +498,7 @@ def test_the_repl_shows_plugin_warnings_and_starts_anyway(tmp_path, monkeypatch,
 
     out = capsys.readouterr().out
     assert "Warning: plugin 'broken' was not loaded (RuntimeError: kaput)" in out
-    assert "Local Agent ready" in out
+    assert "Wildcat Code Agent ready" in out
     assert "[plugins] loaded" not in out
 
 
@@ -557,7 +557,7 @@ def test_bad_plugin_settings_are_config_errors_that_name_the_key(tmp_path, text,
 def test_a_plugin_tool_without_a_risk_is_not_loaded(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "norisk.py", """
-        from local_agent.plugin import tool
+        from wildcat_code_agent.plugin import tool
 
         @tool()
         def no_risk(text: str) -> str:
@@ -575,7 +575,7 @@ def test_a_plugin_tool_without_a_risk_is_not_loaded(tmp_path):
 def test_a_plugin_tool_with_an_unknown_risk_is_not_loaded(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "badrisk.py", """
-        from local_agent.plugin import tool
+        from wildcat_code_agent.plugin import tool
 
         @tool(risk="admin")
         def bad_risk(text: str) -> str:
@@ -591,7 +591,7 @@ def test_a_plugin_tool_with_an_unknown_risk_is_not_loaded(tmp_path):
 def test_a_plugin_exec_tool_always_asks(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "runner.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.EXEC)
         def run_thing(text: str) -> str:
@@ -699,7 +699,7 @@ def test_the_guard_checks_the_resolved_path_not_the_spelling(tmp_path):
 
 
 def test_the_plugin_folder_guard_is_a_path_check_not_a_prefix_check(tmp_path):
-    from local_agent import sandbox
+    from wildcat_code_agent import sandbox
 
     ws = _workspace(tmp_path)
     folder = ws / "tools"
@@ -726,7 +726,7 @@ def test_a_file_plugin_registers_its_tools_again_after_close(tmp_path):
     assert REGISTRY["sample_count_words"].call({"text": "a b"}) == "2 words"
     second.close()
     assert "sample_count_words" not in REGISTRY
-    assert "local_agent_plugins.sample_plugin" not in sys.modules
+    assert "wildcat_code_agent_plugins.sample_plugin" not in sys.modules
 
 
 def test_an_entry_point_module_registers_its_tools_again_after_close(monkeypatch, tmp_path):
@@ -747,7 +747,7 @@ def test_an_entry_point_module_registers_its_tools_again_after_close(monkeypatch
 def test_a_failed_plugin_loads_again_once_it_is_fixed(tmp_path):
     folder = _folder(tmp_path)
     _write(folder, "fixme.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def fixme_tool(text: str) -> str:
@@ -759,11 +759,11 @@ def test_a_failed_plugin_loads_again_once_it_is_fixed(tmp_path):
     settings = _settings(folder, _workspace(tmp_path))
 
     broken = load_plugins(settings)
-    assert "fixme_tool" not in REGISTRY and "local_agent_plugins.fixme" not in sys.modules
+    assert "fixme_tool" not in REGISTRY and "wildcat_code_agent_plugins.fixme" not in sys.modules
     assert "not yet" in broken.warnings[0]
 
     _write(folder, "fixme.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def fixme_tool(text: str) -> str:
@@ -790,7 +790,7 @@ def test_a_plugin_with_no_tools_warns_and_is_left_out_of_the_loaded_line(tmp_pat
     assert [p.name for p in runtime.loaded] == ["sample_plugin"]
     assert describe_loaded(runtime) == "[plugins] loaded: sample_plugin (2 tools)"
     runtime.close()
-    assert "local_agent_plugins.empty" not in sys.modules
+    assert "wildcat_code_agent_plugins.empty" not in sys.modules
 
 
 def test_only_a_plugin_with_no_tools_gives_no_loaded_line(tmp_path):
@@ -804,10 +804,10 @@ def test_only_a_plugin_with_no_tools_gives_no_loaded_line(tmp_path):
     assert runtime.warnings == ["Warning: plugin 'empty' registered no tools."]
 
 
-# --- helper files and the local_agent_plugins stub ------------------------------------------------------
+# --- helper files and the wildcat_code_agent_plugins stub ------------------------------------------------------
 
 HELPER_PLUGIN = """
-    from local_agent.plugin import Risk, tool
+    from wildcat_code_agent.plugin import Risk, tool
     from . import _helper
 
     @tool(risk=Risk.READ)
@@ -830,8 +830,8 @@ def test_a_plugin_can_import_a_helper_file_with_a_relative_import(tmp_path):
     assert not list(folder.glob("__pycache__"))  # no bytecode written into the user's folder
     runtime.close()
     assert "shout_text" not in REGISTRY
-    assert "local_agent_plugins" not in sys.modules
-    assert "local_agent_plugins._helper" not in sys.modules
+    assert "wildcat_code_agent_plugins" not in sys.modules
+    assert "wildcat_code_agent_plugins._helper" not in sys.modules
 
 
 def test_two_plugin_folders_in_one_process_do_not_share_helpers(tmp_path):
@@ -853,7 +853,7 @@ def test_a_helper_with_a_syntax_error_fails_only_the_plugin_that_imports_it(tmp_
     _write(folder, "_helper.py", "def shout(:\n")
     _write(folder, "uses_helper.py", HELPER_PLUGIN)
     _write(folder, "plain.py", """
-        from local_agent.plugin import Risk, tool
+        from wildcat_code_agent.plugin import Risk, tool
 
         @tool(risk=Risk.READ)
         def plain_tool(text: str) -> str:
@@ -900,9 +900,9 @@ def test_ctrl_c_while_plugins_load_returns_quietly_and_undoes_the_loaded_ones(tm
 
     out, err = capsys.readouterr()
     assert "Traceback" not in out + err
-    assert "Local Agent ready" not in out
+    assert "Wildcat Code Agent ready" not in out
     assert "sample_count_words" not in REGISTRY
-    assert "local_agent_plugins.a_sample" not in sys.modules
+    assert "wildcat_code_agent_plugins.a_sample" not in sys.modules
 
 
 def test_plugins_are_closed_when_starting_the_mcp_servers_raises(tmp_path, monkeypatch):
@@ -915,7 +915,7 @@ def test_plugins_are_closed_when_starting_the_mcp_servers_raises(tmp_path, monke
         cli.run(settings=_settings(folder, _workspace(tmp_path)), client=FakeOllama([]))
 
     assert "sample_count_words" not in REGISTRY
-    assert "local_agent_plugins" not in sys.modules
+    assert "wildcat_code_agent_plugins" not in sys.modules
 
 
 def _raise_runtime_error(*args, **kwargs):

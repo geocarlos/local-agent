@@ -1,6 +1,6 @@
-# local-agent protocol
+# wildcat-code-agent protocol
 
-`local-agent serve --stdio` runs the agent as an Agent Client Protocol (ACP) agent. An editor or a script starts it as a child process and talks to it over stdin and stdout. `local-agent serve --web` serves the same messages over a WebSocket on localhost, for the web UI and other local clients (see [WebSocket transport](#websocket-transport-serve---web)).
+`wildcat-code-agent serve --stdio` runs the agent as an Agent Client Protocol (ACP) agent. An editor or a script starts it as a child process and talks to it over stdin and stdout. `wildcat-code-agent serve --web` serves the same messages over a WebSocket on localhost, for the web UI and other local clients (see [WebSocket transport](#websocket-transport-serve---web)).
 
 - **ACP version:** protocol version **1** (`protocolVersion: 1`). Checked against the v1 schema (release `schema.json` of agentclientprotocol.com, fetched 2026-11-25) and the v1 pages for initialization, session setup, prompt turn, tool calls, cancellation and errors. ACP v2 is in preview upstream and is not implemented; the server answers `protocolVersion: 1` to any client version.
 - **Transport:** JSON-RPC 2.0, one message per line, UTF-8, each line ends with `\n`. Output is ASCII-only JSON (non-ASCII characters are escaped), so any console encoding reads it.
@@ -9,11 +9,11 @@
 ## Starting the server
 
 ```
-local-agent serve --stdio [--model NAME] [--host URL] [--num-ctx N] [--cwd FOLDER] [--profile NAME] [--config FILE] [--no-plugins]
+wildcat-code-agent serve --stdio [--model NAME] [--host URL] [--num-ctx N] [--cwd FOLDER] [--profile NAME] [--config FILE] [--no-plugins]
 ```
 
 - Choose one transport: `--stdio` (this section) or `--web` (see [WebSocket transport](#websocket-transport-serve---web)). `--port` applies to `--web` only.
-- The settings flags are the same as for `local-agent chat`, and use the same config file, `OLLAMA_HOST` and precedence (flags, then environment, then config file, then defaults; see README).
+- The settings flags are the same as for `wildcat-code-agent chat`, and use the same config file, `OLLAMA_HOST` and precedence (flags, then environment, then config file, then defaults; see README).
 - `--cwd` is the default workspace. A session can name its own `cwd` in `session/new`.
 - Plugins and MCP servers from the config start before the first message and close at EOF.
 - **stdout carries only protocol lines.** Warnings and logs (plugin and MCP problems, the model check at start-up, unsupported request fields) go to stderr. While the server runs, file descriptor 1 (the process's stdout) is pointed at stderr, and `sys.stdout` too. So a stray `print`, `os.system`, a `subprocess` with no capture, or a direct `os.write(1, ...)` from a plugin or a tool lands on stderr. The protocol writes to a copy of the original stdout, and fd 1 is restored when the server returns.
@@ -23,13 +23,13 @@ Shutdown: when stdin reaches EOF, the server cancels every running turn and wait
 ## WebSocket transport (`serve --web`)
 
 ```
-local-agent serve --web [--port N] [the same settings flags as --stdio]
+wildcat-code-agent serve --web [--port N] [the same settings flags as --stdio]
 ```
 
 The server listens on `127.0.0.1` only, on port `N` (default `0`: a free port the system picks). It prints these lines to stderr at start-up:
 
 ```
-local-agent web server: http://127.0.0.1:52811/
+wildcat-code-agent web server: http://127.0.0.1:52811/
 Open this link in a browser: http://127.0.0.1:52811/#token=<token>
 WebSocket: ws://127.0.0.1:52811/ws?token=<token>
 ```
@@ -39,7 +39,7 @@ WebSocket: ws://127.0.0.1:52811/ws?token=<token>
 | Route | Answer |
 | --- | --- |
 | `GET /` | the web UI (`index.html`) |
-| `GET /<file>` | a file of the web folder (`src/local_agent/web/`): `.html`, `.css`, `.js`, `.svg`, `.png`, `.ico`, with its content type. Any other path, a folder, a `..` or backslash path, a symbolic link out of the folder: `404` |
+| `GET /<file>` | a file of the web folder (`src/wildcat_code_agent/web/`): `.html`, `.css`, `.js`, `.svg`, `.png`, `.ico`, with its content type. Any other path, a folder, a `..` or backslash path, a symbolic link out of the folder: `404` |
 | `GET /info` | `{"cwd": <workspace>, "protocolVersion": 1}`, `Cache-Control: no-store`. Needs the token in an `Authorization: Bearer` header (not in the query, so it stays out of logs and history); without it, `403` |
 | `GET /ws` | the WebSocket (below) |
 
@@ -88,7 +88,7 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
 ```
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[],"agentInfo":{"name":"local-agent","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[],"agentInfo":{"name":"wildcat-code-agent","version":"0.1.0"}}}
 ```
 
 `protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text blocks only, so all prompt capabilities are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
@@ -162,12 +162,12 @@ Switches the model of one session (ACP v1 session configuration; the only option
 
 ### Extension methods
 
-ACP reserves method names that start with `_` for extensions. These are local-agent's own, the same on stdio and on the WebSocket. They need `initialize` first.
+ACP reserves method names that start with `_` for extensions. These are wildcat-code-agent's own, the same on stdio and on the WebSocket. They need `initialize` first.
 
-#### `_local-agent/models`
+#### `_wildcat-code-agent/models`
 
 ```json
-{"jsonrpc":"2.0","id":7,"method":"_local-agent/models","params":{"sessionId":"sess-6f1c..."}}
+{"jsonrpc":"2.0","id":7,"method":"_wildcat-code-agent/models","params":{"sessionId":"sess-6f1c..."}}
 ```
 ```json
 {"jsonrpc":"2.0","id":7,"result":{"current":"qwen3-vl:8b","models":["qwen2.5-coder:7b","qwen3-vl:8b"],"error":null}}
@@ -175,19 +175,19 @@ ACP reserves method names that start with `_` for extensions. These are local-ag
 
 The installed models from Ollama, for a refresh of the picker. `sessionId` is optional (with it, `current` is that session's model; otherwise the default). When Ollama cannot be reached, `models` is empty and `error` holds the message; the request itself does not fail.
 
-#### `_local-agent/settings/get` and `_local-agent/settings/set`
+#### `_wildcat-code-agent/settings/get` and `_wildcat-code-agent/settings/set`
 
 The settings editor reads and writes the per-user `config.toml`, or the `--config` file the server was started with.
 
 ```json
-{"jsonrpc":"2.0","id":8,"method":"_local-agent/settings/get","params":{}}
+{"jsonrpc":"2.0","id":8,"method":"_wildcat-code-agent/settings/get","params":{}}
 ```
 ```json
-{"jsonrpc":"2.0","id":8,"result":{"file":"C:\\Users\\me\\AppData\\Roaming\\local-agent\\config.toml","exists":true,"values":{"model":"qwen3-vl:8b","host":"http://127.0.0.1:11434","num_ctx":8192,"max_tool_rounds":10,"max_output_chars":8000,"command_timeout_s":60,"network_timeout_s":20,"tool_profile":"coding"},"kinds":{"model":"text","host":"text","num_ctx":"int","max_tool_rounds":"int","max_output_chars":"int","command_timeout_s":"int","network_timeout_s":"int","tool_profile":"choice"},"applies":"restart"}}
+{"jsonrpc":"2.0","id":8,"result":{"file":"C:\\Users\\me\\AppData\\Roaming\\wildcat-code-agent\\config.toml","exists":true,"values":{"model":"qwen3-vl:8b","host":"http://127.0.0.1:11434","num_ctx":8192,"max_tool_rounds":10,"max_output_chars":8000,"command_timeout_s":60,"network_timeout_s":20,"tool_profile":"coding"},"kinds":{"model":"text","host":"text","num_ctx":"int","max_tool_rounds":"int","max_output_chars":"int","command_timeout_s":"int","network_timeout_s":"int","tool_profile":"choice"},"applies":"restart"}}
 ```
 
 - `values` are the file's values with the defaults filled in. A missing file gives the defaults and `exists: false`. A file the agent cannot load is `-32602`, with the reason.
-- `_local-agent/settings/set` takes `{"values": {...}}` with any subset of the editable keys. It checks each value with the same rules as the file and the flags, then writes the file atomically (a temp file, checked as a whole, then renamed over it). The response is the `get` answer with `"saved": true`. The folder is created if needed.
+- `_wildcat-code-agent/settings/set` takes `{"values": {...}}` with any subset of the editable keys. It checks each value with the same rules as the file and the flags, then writes the file atomically (a temp file, checked as a whole, then renamed over it). The response is the `get` answer with `"saved": true`. The folder is created if needed.
 - **Allowlist (decided).** Only `model`, `host`, `num_ctx`, `max_tool_rounds`, `max_output_chars`, `command_timeout_s`, `network_timeout_s` and `tool_profile` can be set. Any other key is `-32602` and nothing is written. Kept out on purpose: `network_enabled` (turns on the network tool), `workspace` (the default folder for the file tools), `plugin_dir`, `plugins_enabled`, `disabled_plugins` (plugins are Python files that run in the process), `mcp_servers` and `test_command` (they name programs that are started). Those are edited by hand.
 - Comments and the layout of the file are kept (tomlkit). A key this version does not know is refused when the file is loaded, so the editor never writes one. Integer limits: `num_ctx` up to 1048576, `max_output_chars` up to 1000000, `max_tool_rounds` up to 200, `command_timeout_s` and `network_timeout_s` up to 3600; every integer is at most 2**63 - 1. The same limits hold for the file and the flags.
 - **Ollama address (decided).** The editor accepts `host` only when it is loopback (`127.0.0.1`, `localhost` or `::1`, any port). Another host is `-32602` with a message that says to edit `config.toml` by hand. A change of `host` is logged on stderr (it takes effect at the next start).
@@ -195,7 +195,7 @@ The settings editor reads and writes the per-user `config.toml`, or the `--confi
 
 ## Saved sessions
 
-Each session is saved after each turn, to one JSON file in the per-user data folder: `%APPDATA%\local-agent\sessions\sess-<32 hex digits>.json` (platformdirs, roaming). Nothing is written into the install folder. The environment variable `LOCAL_AGENT_DATA_DIR` replaces the data folder (the tests use it).
+Each session is saved after each turn, to one JSON file in the per-user data folder: `%APPDATA%\wildcat-code-agent\sessions\sess-<32 hex digits>.json` (platformdirs, roaming). Nothing is written into the install folder. The environment variable `WILDCAT_CODE_AGENT_DATA_DIR` replaces the data folder (the tests use it).
 
 ```json
 {"format": 1, "id": "sess-...", "cwd": "C:\\work\\my-project", "model": "qwen3-vl:8b", "title": "What is in README.md?", "created": "2026-11-25T20:39:01+00:00", "updated": "2026-11-25T20:40:12+00:00", "messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
@@ -206,7 +206,7 @@ Each session is saved after each turn, to one JSON file in the per-user data fol
 - The title is the first user message, whitespace collapsed and cut to 80 characters.
 - **Limits (decided):** a session file over 5 MiB is not saved. A failed save (too large, or the disk refuses) is logged on stderr and reported to the user: the `session/prompt` answer carries `_meta.warnings` (a list of text), and the chat window shows them. The chat goes on, but its later messages are lost after a restart. At most 200 session files are kept: after a save, the least recently updated files beyond 200 are deleted, with a warning that says how many. Corrupt files count toward the 200 (they are not separated out). A session id from a client must match `sess-` plus 32 lowercase hex digits before any path is built.
 - The reasoning text is not saved. "Allow always" answers are not saved.
-- The CLI (`local-agent chat`) does not save sessions. Only the server does.
+- The CLI (`wildcat-code-agent chat`) does not save sessions. Only the server does.
 
 ## Worked example: Ollama down
 ### `session/prompt` (client request)
@@ -260,7 +260,7 @@ Examples (one line each in the real output):
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-6f1c...","update":{"sessionUpdate":"tool_call","toolCallId":"t1-1.1","title":"read_file(path='README.md')","kind":"read","status":"pending","rawInput":{"path":"README.md"}}}}
 ```
 ```json
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-6f1c...","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1-1.1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"# local-agent ..."}}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-6f1c...","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1-1.1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"# wildcat-code-agent ..."}}]}}}
 ```
 ```json
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-6f1c...","update":{"sessionUpdate":"usage_update","used":1921,"size":8192}}}
@@ -338,7 +338,7 @@ The names and shapes are ACP v1's, checked against the v1 release `schema.json` 
 - `terminal/wait_for_exit` → `{exitCode, signal}`. `terminal/output` → `{output, truncated, exitStatus}`, with `exitStatus` `null` while the command runs. `terminal/kill` and `terminal/release` → `null`. `output` is stdout and stderr together.
 - A client answer must have a `result` or an `error` object. One with neither (for example `"error": "x"`) is an error for the tool (`the editor sent a malformed answer to <method>`), not a success.
 - Trust: the core checks every path against the sandbox and asks the user first (see Approval and the sandbox below), so the client receives only paths the core has approved. A path outside the workspace that the user approved is legal and the client does not refuse it. The VS Code host checks only the form of paths (absolute, and for `cwd` an existing directory); it does not check them against the workspace, and it trusts the core's sandbox and approval.
-- Terminals in the VS Code host: each command gets a terminal named `local-agent`. `terminal/release` ends the command if it still runs (`terminal/kill`), and the terminal stays open with the output and a final `[exit code N]` (or `[signal ...]`) line, so the user can read it. One agent terminal is kept at a time: the next `terminal/create` closes the previous released one, and a command the agent still uses keeps its terminal. The user closing a terminal ends its command. When the agent stops or exits, its commands are released the same way (their terminals stay until the next command or the panel closes).
+- Terminals in the VS Code host: each command gets a terminal named `wildcat-code-agent`. `terminal/release` ends the command if it still runs (`terminal/kill`), and the terminal stays open with the output and a final `[exit code N]` (or `[signal ...]`) line, so the user can read it. One agent terminal is kept at a time: the next `terminal/create` closes the previous released one, and a command the agent still uses keeps its terminal. The user closing a terminal ends its command. When the agent stops or exits, its commands are released the same way (their terminals stay until the next command or the panel closes).
 - Time limits: an fs request waits 30 s, and `terminal/output`, `kill` and `release` 5 s. `terminal/wait_for_exit` waits for the command timeout (`command_timeout_s`). On a timeout the agent kills the command, reads its output and releases it, and the tool result says it timed out.
 - Cancel: a `session/cancel` while the agent waits for an fs request or `terminal/wait_for_exit` ends the turn as `cancelled`. A command that was running is killed and released. The client does not need to answer after a cancel; a late answer is dropped without a warning.
 - An error answer, or no answer in time, is text for the model (`Error: ...`), and the turn goes on. The agent does not retry.
@@ -380,7 +380,7 @@ Checked for T17 against the v1 release `schema.json` (agentclientprotocol.com, d
 - **Not implemented:** `session/resume`, `session/close`, `session/delete`, `session/set_mode`, authentication, `$/cancel_request`, plans, slash commands and subagents. The client's `fs/*` and `terminal/*` methods are used when the client declares them (see Client methods above); the agent does not offer them itself.
 - **Client methods (T20):** the agent sends `terminal/create` with `args: []` for a command line (it runs through the client's shell, not as a program). ACP says `command` is the program; a client that starts it directly would not run `cmd` lines. The VS Code host runs them through the shell. `fs/read_text_file` `line` and `limit` are not sent by the agent yet.
 - **Session configuration:** only the `model` option, through `session/set_config_option` (ACP v1 shape: `configOptions` with `category: "model"`, `type: "select"`). Checked against the v1 schema (see below).
-- **Extensions:** `_local-agent/models`, `_local-agent/settings/get` and `_local-agent/settings/set` (see above).
+- **Extensions:** `_wildcat-code-agent/models`, `_wildcat-code-agent/settings/get` and `_wildcat-code-agent/settings/set` (see above).
 - **Prompts:** text blocks only.
 - **`session/new`:** `mcpServers` is accepted and ignored (warning on stderr). `systemPrompt` and `additionalDirectories` are ignored. The answer carries `configOptions` and `_meta`.
 - **Tool calls:** the `title` is generated from the tool name and arguments, not the approval question (the permission request carries that). `status` is `pending` before approval.

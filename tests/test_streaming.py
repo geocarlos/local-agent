@@ -11,12 +11,12 @@ import ollama
 import pytest
 from fakes import FakeOllama, Raise, Run, Stream, chunk, chunked, text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import DEFAULT_MODEL, Settings
-from local_agent.core import loop
-from local_agent.core.events import Error, TextDelta, ToolCall, ToolResult, TurnDone
-from local_agent.permissions import Risk
-from local_agent.tools import tool
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import DEFAULT_MODEL, Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import Error, TextDelta, ToolCall, ToolResult, TurnDone
+from wildcat_code_agent.permissions import Risk
+from wildcat_code_agent.tools import tool
 
 
 def start(user_text: str) -> list:

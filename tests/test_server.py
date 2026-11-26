@@ -15,9 +15,9 @@ import httpx
 import pytest
 
 from fakes import FakeOllama, Raise, Run, Stream, chunk, text_reply, tool_reply
-from local_agent.config import Settings
-from local_agent.frontends import server as server_module
-from local_agent.frontends.server import OVERSIZE_LINE, StdioServer, _bounded_lines, serve_stdio
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import server as server_module
+from wildcat_code_agent.frontends.server import OVERSIZE_LINE, StdioServer, _bounded_lines, serve_stdio
 
 TIMEOUT = 5
 

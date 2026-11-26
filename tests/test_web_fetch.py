@@ -11,13 +11,13 @@ import httpx
 import pytest
 from fakes import text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import Settings
-from local_agent.core import loop
-from local_agent.core.events import Decision, ToolResult
-from local_agent.permissions import SessionApprovals
-from local_agent.tools import web_tools
-from local_agent.tools.registry import ToolContext
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import Decision, ToolResult
+from wildcat_code_agent.permissions import SessionApprovals
+from wildcat_code_agent.tools import web_tools
+from wildcat_code_agent.tools.registry import ToolContext
 
 
 class Site:
@@ -256,7 +256,7 @@ def test_the_request_is_a_plain_get_with_a_generic_user_agent_and_no_credentials
 
     request = site.requests[0]
     assert request.method == "GET"
-    assert request.headers["user-agent"].startswith("local-agent/")
+    assert request.headers["user-agent"].startswith("wildcat-code-agent/")
     assert "authorization" not in request.headers
     assert "cookie" not in request.headers
 

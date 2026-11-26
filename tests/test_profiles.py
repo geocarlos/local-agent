@@ -8,11 +8,11 @@ import json
 
 from fakes import text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import DEFAULT_TOOL_PROFILE, TOOL_PROFILES, Settings
-from local_agent.core import loop
-from local_agent.core.events import Decision, ToolResult
-from local_agent.tools import profiles
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import DEFAULT_TOOL_PROFILE, TOOL_PROFILES, Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import Decision, ToolResult
+from wildcat_code_agent.tools import profiles
 
 READ_TOOLS = {"read_file", "list_dir", "glob", "grep", "git_status", "git_diff", "git_log"}
 CODING_TOOLS = READ_TOOLS | {"edit_file", "write_file", "git_commit", "run_command", "run_tests"}
