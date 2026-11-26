@@ -1,5 +1,5 @@
 // The VS Code side: a command that opens a webview panel. The panel shows the T16 web bundle (copied to webview/
-// at build time). The extension host starts `local-agent serve --stdio` and relays its JSON lines to and from the
+// at build time). The extension host starts `wildcat-code-agent serve --stdio` and relays its JSON lines to and from the
 // webview; the bundle's AcpClient does the JSON-RPC, approvals included. The host also answers the agent's fs/* and
 // terminal/* requests itself (T20, editorTools.ts), so the agent's file reads, writes and commands go to the editor.
 // See README "VS Code extension".
@@ -22,7 +22,7 @@ import { GuardedSender } from "./guardedSender";
 import { AgentProcess, serveArgv } from "./stdioAgent";
 import { nonceFrom, renderWebviewPage } from "./webviewHtml";
 
-const VIEW_TYPE = "localAgent.chat";
+const VIEW_TYPE = "wildcatCodeAgent.chat";
 
 let panel: vscode.WebviewPanel | undefined;
 let agent: AgentProcess | undefined;
@@ -49,11 +49,11 @@ function sendToChat(message: HostToWebview): void {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel("local-agent");
+  const output = vscode.window.createOutputChannel("wildcat-code-agent");
   context.subscriptions.push(output);
   context.subscriptions.push(
-    vscode.commands.registerCommand("localAgent.openChat", () => openChat(context, output)),
-    vscode.commands.registerCommand("localAgent.addSelection", () => addSelection(context, output)),
+    vscode.commands.registerCommand("wildcatCodeAgent.openChat", () => openChat(context, output)),
+    vscode.commands.registerCommand("wildcatCodeAgent.addSelection", () => addSelection(context, output)),
     // Only a real file editor changes the open file. Focusing the chat in the same group makes the editor undefined;
     // that keeps the last file editor (see activeFileOf).
     vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -92,11 +92,11 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
   }
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
-    void vscode.window.showErrorMessage("local-agent works in a workspace folder. Open a folder first.");
+    void vscode.window.showErrorMessage("wildcat-code-agent works in a workspace folder. Open a folder first.");
     return;
   }
   const bundle = vscode.Uri.joinPath(context.extensionUri, "webview");
-  const current = vscode.window.createWebviewPanel(VIEW_TYPE, "local-agent", vscode.ViewColumn.Beside, {
+  const current = vscode.window.createWebviewPanel(VIEW_TYPE, "wildcat-code-agent", vscode.ViewColumn.Beside, {
     enableScripts: true,
     retainContextWhenHidden: true,
     localResourceRoots: [bundle],
@@ -118,7 +118,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
       return;
     }
     stopAgent();
-    const command = vscode.workspace.getConfiguration("localAgent").get<string[]>("command", ["local-agent"]);
+    const command = vscode.workspace.getConfiguration("wildcatCodeAgent").get<string[]>("command", ["wildcat-code-agent"]);
     const relay: AgentProcess = new AgentProcess({
       onMessage: (text) => {
         const request = clientRequestOf(text);

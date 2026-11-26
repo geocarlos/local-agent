@@ -1,10 +1,10 @@
-# Smoke test for dist\local-agent\local-agent.exe, run after packaging\build.ps1 (the release workflow runs it).
+# Smoke test for dist\wildcat-code-agent\wildcat-code-agent.exe, run after packaging\build.ps1 (the release workflow runs it).
 #
-# 1. `local-agent.exe --help` exits 0 and prints the usage line.
+# 1. `wildcat-code-agent.exe --help` exits 0 and prints the usage line.
 # 2. `serve --stdio` starts with a temp plugin folder holding packaging\smoke\smoke_stdlib.py. Stdin is empty,
 #    so the server gets EOF at once and must exit 0 after loading the plugins.
 # 3. The plugin's results file says which standard-library modules import inside the frozen app.
-#    REQUIRED modules are the ones packaging\local-agent.spec lists in hiddenimports (sqlite3 included), plus
+#    REQUIRED modules are the ones packaging\wildcat-code-agent.spec lists in hiddenimports (sqlite3 included), plus
 #    ctypes, which the app itself needs: click, a dependency of uvicorn, imports it for `serve --web`, and the
 #    window backend (webview, clr, webview.platforms.winforms; T18). A failure fails this script. OPTIONAL modules (bz2, lzma) are reported as warnings only: the build does not promise
 #    them yet (see README, "Standard-library DLLs").
@@ -12,10 +12,10 @@
 #    (90 s at most) for the `WebSocket: ws://127.0.0.1:PORT/...` line on stderr, checks that GET / answers 200,
 #    then stops that process by its own handle. A failure here means the WebSocket stack did not load in the exe.
 #
-# 5. local-agent-gui.exe (T18) is a GUI-subsystem program, and its `--help` exits 0. Opening a window is not
+# 5. wildcat-code-agent-gui.exe (T18) is a GUI-subsystem program, and its `--help` exits 0. Opening a window is not
 #    tested here (a CI runner has no screen to look at); see tests/test_gui_window.py and the T18 notes.
 #
-# Usage: packaging\smoke-exe.ps1 [-Exe <path>]   (default: dist\local-agent\local-agent.exe under the repo root)
+# Usage: packaging\smoke-exe.ps1 [-Exe <path>]   (default: dist\wildcat-code-agent\wildcat-code-agent.exe under the repo root)
 
 param(
     [string]$Exe
@@ -23,7 +23,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
-if (-not $Exe) { $Exe = Join-Path $Root "dist\local-agent\local-agent.exe" }
+if (-not $Exe) { $Exe = Join-Path $Root "dist\wildcat-code-agent\wildcat-code-agent.exe" }
 if (-not (Test-Path $Exe)) { throw "No exe at $Exe. Run packaging\build.ps1 first." }
 $Exe = (Resolve-Path $Exe).Path
 
@@ -31,7 +31,7 @@ $Required = @("sqlite3", "xml.etree.ElementTree", "xml.dom.minidom", "csv", "dec
     "webview", "clr", "webview.platforms.winforms")
 $Optional = @("bz2", "lzma")
 
-$Work = Join-Path ([System.IO.Path]::GetTempPath()) ("local-agent-smoke-" + [guid]::NewGuid().ToString("N"))
+$Work = Join-Path ([System.IO.Path]::GetTempPath()) ("wildcat-code-agent-smoke-" + [guid]::NewGuid().ToString("N"))
 $PluginDir = Join-Path $Work "plugins"
 New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null
 $Results = Join-Path $Work "results.json"
@@ -53,7 +53,7 @@ $Help = Start-Process -FilePath $Exe -ArgumentList "--help" -WorkingDirectory $W
     -RedirectStandardOutput (Join-Path $Work "help.txt") -RedirectStandardError (Join-Path $Work "help-err.txt")
 if (-not $Help.WaitForExit(120000)) { $Help.Kill(); throw "--help did not exit within 120 s" }
 $HelpText = Get-Content (Join-Path $Work "help.txt") -Raw
-if ($Help.ExitCode -ne 0 -or $HelpText -notmatch "usage: local-agent") {
+if ($Help.ExitCode -ne 0 -or $HelpText -notmatch "usage: wildcat-code-agent") {
     $Failures += "--help: exit $($Help.ExitCode), no usage line"
 } else {
     Write-Host "--help: ok"
@@ -124,11 +124,11 @@ if (-not $WebPort) {
 if (-not $Web.HasExited) { $Web.Kill() }
 $Web.WaitForExit(30000) | Out-Null
 
-# 5. The windowed exe (T18): local-agent-gui.exe must be a GUI-subsystem program (no console window), and
+# 5. The windowed exe (T18): wildcat-code-agent-gui.exe must be a GUI-subsystem program (no console window), and
 #    `--help` through the gui command must exit 0 (its output goes nowhere, as it has no console).
-$GuiExe = Join-Path (Split-Path -Parent $Exe) "local-agent-gui.exe"
+$GuiExe = Join-Path (Split-Path -Parent $Exe) "wildcat-code-agent-gui.exe"
 if (-not (Test-Path $GuiExe)) {
-    $Failures += "local-agent-gui.exe is not in the build folder"
+    $Failures += "wildcat-code-agent-gui.exe is not in the build folder"
 } else {
     function Get-PeSubsystem([string]$Path) {
         $Bytes = [System.IO.File]::ReadAllBytes($Path)
@@ -137,12 +137,12 @@ if (-not (Test-Path $GuiExe)) {
     }
     $ConsoleSubsystem = Get-PeSubsystem $Exe
     $GuiSubsystem = Get-PeSubsystem $GuiExe
-    if ($ConsoleSubsystem -ne 3) { $Failures += "local-agent.exe is not a console program (subsystem $ConsoleSubsystem)" }
-    if ($GuiSubsystem -ne 2) { $Failures += "local-agent-gui.exe is not a windowed program (subsystem $GuiSubsystem)" }
+    if ($ConsoleSubsystem -ne 3) { $Failures += "wildcat-code-agent.exe is not a console program (subsystem $ConsoleSubsystem)" }
+    if ($GuiSubsystem -ne 2) { $Failures += "wildcat-code-agent-gui.exe is not a windowed program (subsystem $GuiSubsystem)" }
     $GuiHelp = Start-Process -FilePath $GuiExe -ArgumentList "--help" -WorkingDirectory $Work -PassThru
-    if (-not $GuiHelp.WaitForExit(120000)) { $GuiHelp.Kill(); $Failures += "local-agent-gui.exe --help did not exit within 120 s" }
-    elseif ($GuiHelp.ExitCode -ne 0) { $Failures += "local-agent-gui.exe --help: exit $($GuiHelp.ExitCode)" }
-    else { Write-Host "local-agent-gui.exe: windowed subsystem, --help exit 0" }
+    if (-not $GuiHelp.WaitForExit(120000)) { $GuiHelp.Kill(); $Failures += "wildcat-code-agent-gui.exe --help did not exit within 120 s" }
+    elseif ($GuiHelp.ExitCode -ne 0) { $Failures += "wildcat-code-agent-gui.exe --help: exit $($GuiHelp.ExitCode)" }
+    else { Write-Host "wildcat-code-agent-gui.exe: windowed subsystem, --help exit 0" }
 }
 
 Write-Host "Module results (plugin imports in the frozen app):"

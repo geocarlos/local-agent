@@ -16,13 +16,13 @@ export type WebviewToHost =
 export interface ClientCapabilities {
   fs: { readTextFile: boolean; writeTextFile: boolean };
   terminal: boolean;
-  _meta: { "local-agent": { diagnostics: boolean } };
+  _meta: { "wildcat-code-agent": { diagnostics: boolean } };
 }
 
 export const CLIENT_CAPABILITIES: ClientCapabilities = {
   fs: { readTextFile: true, writeTextFile: true },
   terminal: true,
-  _meta: { "local-agent": { diagnostics: true } },
+  _meta: { "wildcat-code-agent": { diagnostics: true } },
 };
 
 // host -> webview

@@ -1,5 +1,5 @@
 // The host side of the editor context (T21), pure: the selection attachment, the @file glob, the diagnostics reply,
-// and the routing of the agent's _local-agent/diagnostics request.
+// and the routing of the agent's _wildcat-code-agent/diagnostics request.
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -139,9 +139,9 @@ test("bad diagnostics params are invalid params", () => {
 });
 
 test("the diagnostics method is a host method, and its request is routed to the host", () => {
-  assert.equal(DIAGNOSTICS_METHOD, "_local-agent/diagnostics");
+  assert.equal(DIAGNOSTICS_METHOD, "_wildcat-code-agent/diagnostics");
   assert.equal(isHostMethod(DIAGNOSTICS_METHOD), true);
-  assert.equal(isHostMethod("_local-agent/models"), false);
+  assert.equal(isHostMethod("_wildcat-code-agent/models"), false);
   const line = JSON.stringify({ jsonrpc: "2.0", id: "srv-4", method: DIAGNOSTICS_METHOD, params: { uris: [] } });
   assert.deepEqual(clientRequestOf(line), { id: "srv-4", method: DIAGNOSTICS_METHOD, params: { uris: [] } });
 });

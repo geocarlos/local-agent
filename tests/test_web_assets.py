@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fakes import FakeOllama
-from local_agent.config import Settings
-from local_agent.frontends import web, webassets
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import web, webassets
 
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8765
@@ -31,7 +31,7 @@ def client(tmp_path):
 def test_the_asset_folder_is_found_and_holds_the_ui():
     root = webassets.web_root()
     assert root.is_dir(), root
-    assert root == ROOT / "src" / "local_agent" / "web"
+    assert root == ROOT / "src" / "wildcat_code_agent" / "web"
     for name in ["index.html", "style.css", "js/main.js", "js/acp.js", "js/transport.js", "js/chat.js"]:
         assert (root / name).is_file(), name
 
@@ -102,7 +102,7 @@ def test_every_response_has_the_csp_and_nosniff(client):
 def test_paths_outside_the_folder_or_unknown_are_404(client, path):
     response = client.get(path)
     assert response.status_code == 404, path
-    assert "local-agent" not in response.text
+    assert "wildcat-code-agent" not in response.text
 
 
 def test_the_static_files_need_no_token_but_the_info_route_does(client):
@@ -132,7 +132,7 @@ def test_the_websocket_still_needs_the_token(client):
 # ----- packaging ------------------------------------------------------------------------------------
 
 def test_the_pyinstaller_spec_ships_the_web_folder():
-    spec = (ROOT / "packaging" / "local-agent.spec").read_text(encoding="utf-8")
-    assert re.search(r'datas\.append\(\(str\(ROOT / "src" / "local_agent" / "web"\),\s*"local_agent/web"\)\)', spec)
-    assert "local_agent/web" in spec
+    spec = (ROOT / "packaging" / "wildcat-code-agent.spec").read_text(encoding="utf-8")
+    assert re.search(r'datas\.append\(\(str\(ROOT / "src" / "wildcat_code_agent" / "web"\),\s*"wildcat_code_agent/web"\)\)', spec)
+    assert "wildcat_code_agent/web" in spec
 

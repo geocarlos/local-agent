@@ -162,7 +162,7 @@ export function diagnosticItem(input: DiagnosticInput): DiagnosticItem {
   return item;
 }
 
-// The answer to _local-agent/diagnostics. `params` is {uris: string[]}; `lookup` gives a file's diagnostics. Each
+// The answer to _wildcat-code-agent/diagnostics. `params` is {uris: string[]}; `lookup` gives a file's diagnostics. Each
 // requested file is answered, in the order asked, with its items (at most DIAGNOSTICS_PER_FILE).
 export function diagnosticsReply(params: unknown, lookup: (uri: string) => DiagnosticInput[]): unknown {
   const record = recordParams(params);

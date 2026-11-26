@@ -1,4 +1,4 @@
-// JSON lines framing for `local-agent serve --stdio`: one JSON-RPC message per line, UTF-8, "\n" ends a line.
+// JSON lines framing for `wildcat-code-agent serve --stdio`: one JSON-RPC message per line, UTF-8, "\n" ends a line.
 // Pure (no vscode import) so it can be tested with the plain node test runner.
 
 export class LineSplitter {

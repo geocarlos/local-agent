@@ -43,17 +43,17 @@ test("parseWebviewMessage accepts ready and send, and ignores anything else", ()
 });
 
 test("serveArgv puts the setting's extra items before serve --stdio --cwd", () => {
-  assert.deepEqual(serveArgv(["local-agent"], "C:\\work"), {
-    program: "local-agent",
+  assert.deepEqual(serveArgv(["wildcat-code-agent"], "C:\\work"), {
+    program: "wildcat-code-agent",
     args: ["serve", "--stdio", "--cwd", "C:\\work"],
   });
-  assert.deepEqual(serveArgv(["uv", "run", "--project", "C:\\repo", "local-agent"], "C:\\work"), {
+  assert.deepEqual(serveArgv(["uv", "run", "--project", "C:\\repo", "wildcat-code-agent"], "C:\\work"), {
     program: "uv",
-    args: ["run", "--project", "C:\\repo", "local-agent", "serve", "--stdio", "--cwd", "C:\\work"],
+    args: ["run", "--project", "C:\\repo", "wildcat-code-agent", "serve", "--stdio", "--cwd", "C:\\work"],
   });
 });
 
 test("serveArgv refuses an empty command with a message that names the setting", () => {
-  assert.throws(() => serveArgv([], "C:\\work"), /localAgent\.command is empty/);
-  assert.throws(() => serveArgv(["  "], "C:\\work"), /localAgent\.command is empty/);
+  assert.throws(() => serveArgv([], "C:\\work"), /wildcatCodeAgent\.command is empty/);
+  assert.throws(() => serveArgv(["  "], "C:\\work"), /wildcatCodeAgent\.command is empty/);
 });

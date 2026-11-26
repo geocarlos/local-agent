@@ -5,10 +5,10 @@ import json
 import pytest
 from fakes import text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.core import loop
-from local_agent.core.events import ApprovalRequest, Decision, ToolCall, TurnDone
-from local_agent.core.toolcalls import parse_text_tool_calls
+from wildcat_code_agent import tools
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import ApprovalRequest, Decision, ToolCall, TurnDone
+from wildcat_code_agent.core.toolcalls import parse_text_tool_calls
 
 READ = {"name": "read_file", "arguments": {"path": "a.txt"}}
 

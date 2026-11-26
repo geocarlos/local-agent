@@ -30,7 +30,7 @@ export class ClientMethodError extends Error {
 
 // The agent asks the host for the diagnostics of the files attached to a prompt (T21). Declared by the host in
 // clientCapabilities._meta, so the agent asks only when it is answered.
-export const DIAGNOSTICS_METHOD = "_local-agent/diagnostics";
+export const DIAGNOSTICS_METHOD = "_wildcat-code-agent/diagnostics";
 
 // True for the methods the host answers: fs/*, terminal/* and the diagnostics method. The agent's own requests
 // (session/request_permission) and every response or notification go to the webview.

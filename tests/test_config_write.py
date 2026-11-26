@@ -2,8 +2,8 @@
 
 import pytest
 
-from local_agent import config, config_write
-from local_agent.config import ConfigError, Settings
+from wildcat_code_agent import config, config_write
+from wildcat_code_agent.config import ConfigError, Settings
 
 
 def test_a_value_written_is_read_back_equal(tmp_path):

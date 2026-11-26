@@ -1,4 +1,4 @@
-# local-agent: expansion plan
+# wildcat-code-agent: expansion plan
 
 Goals: (1) more tools, (2) a GUI, (3) a standalone app on PATH for every Windows account on this machine, (4) a VS Code extension usable like GitHub Copilot or Claude Code.
 
@@ -6,7 +6,7 @@ Items marked **verify** are things I could not confirm from the code and should 
 
 ## 1. Key idea: split the core from the frontends
 
-All four goals share one blocker. Today [agent.py](src/local_agent/agent.py) mixes the agent loop, the tools, the approval prompts (`input()` inside `write_file` and `run_command`) and the output (`print`). A GUI or an extension cannot answer an `input()` call.
+All four goals share one blocker. Today [agent.py](src/wildcat_code_agent/agent.py) mixes the agent loop, the tools, the approval prompts (`input()` inside `write_file` and `run_command`) and the output (`print`). A GUI or an extension cannot answer an `input()` call.
 
 So the first milestone is a refactor, and every later goal plugs into it:
 
@@ -67,7 +67,7 @@ Design the registry so a tool can run **in the core** (CLI, GUI) or **in the cli
 Target layout:
 
 ```
-src/local_agent/
+src/wildcat_code_agent/
   core/         loop, events, session, ollama client wrapper
   tools/        registry + fs, search, shell, git, web, mcp
   permissions.py  approval policy
@@ -117,16 +117,16 @@ Risk tiers decide approval behavior:
 
 Requirement: runs from anywhere, for any account on this device.
 
-- **Stopgap now:** `uv tool install .` puts `local-agent` on PATH for *your* account only.
+- **Stopgap now:** `uv tool install .` puts `wildcat-code-agent` on PATH for *your* account only.
 - **Real packaging:** PyInstaller or Nuitka in `--onedir` mode (faster start than `--onefile`, which unpacks to temp on every launch and trips antivirus more often). **Verify** that your chosen tool supports Python 3.14; if not, lower `requires-python` for the build.
-- **Installer:** Inno Setup (or WiX for MSI) with admin rights, installing to `C:\Program Files\local-agent\` and adding that folder to the *machine* PATH. A per-user install under `%LOCALAPPDATA%` would only reach one account, so it does not meet the requirement.
-- **Keep state per user.** The install directory is read-only and shared. Config, logs and session history go in `%APPDATA%\local-agent` for each account, never in Program Files.
+- **Installer:** Inno Setup (or WiX for MSI) with admin rights, installing to `C:\Program Files\wildcat-code-agent\` and adding that folder to the *machine* PATH. A per-user install under `%LOCALAPPDATA%` would only reach one account, so it does not meet the requirement.
+- **Keep state per user.** The install directory is read-only and shared. Config, logs and session history go in `%APPDATA%\wildcat-code-agent` for each account, never in Program Files.
 - **Ollama is not shared by default.** On Windows it normally installs per user, with models under each user's profile (**verify**). Other accounts need their own Ollama and pulled models, or a machine-wide `OLLAMA_MODELS` setting. Two logged-in accounts also compete for port 11434. Document this in the README and make the host configurable.
-- Entry points: `local-agent` (CLI), `local-agent gui`, `local-agent serve --stdio`, with `--model` and `--cwd` flags.
+- Entry points: `wildcat-code-agent` (CLI), `wildcat-code-agent gui`, `wildcat-code-agent serve --stdio`, with `--model` and `--cwd` flags.
 - CI builds the installer and attaches it to GitHub Releases.
 - Unsigned executables trigger SmartScreen and Defender warnings. That is fine on your own machine. For distribution you need a code-signing certificate.
 
-**Done when:** a second Windows account, after running the installer once, can open a terminal anywhere and run `local-agent`.
+**Done when:** a second Windows account, after running the installer once, can open a terminal anywhere and run `wildcat-code-agent`.
 
 ### M3: GUI
 
@@ -136,21 +136,21 @@ Requirement: runs from anywhere, for any account on this device.
 - Alternatives I do not recommend: a native toolkit such as PySide6 means a second UI codebase that cannot be reused in VS Code, and a Textual TUI is not a GUI.
 - The web bundle is reused inside the VS Code extension, so build it as a standalone static app from the start.
 
-**Done when:** `local-agent gui` opens a window where you can chat, see tool calls, and approve or deny writes.
+**Done when:** `wildcat-code-agent gui` opens a window where you can chat, see tool calls, and approve or deny writes.
 
 ### M4: VS Code extension
 
-- TypeScript extension in `extensions/vscode/`. It starts `local-agent serve --stdio` as a child process and exchanges the same events as JSON lines. Stdio avoids ports and the localhost-auth problem entirely.
+- TypeScript extension in `extensions/vscode/`. It starts `wildcat-code-agent serve --stdio` as a child process and exchanges the same events as JSON lines. Stdio avoids ports and the localhost-auth problem entirely.
 - **UI choice** (decide at the start of this milestone):
   - *Own webview panel* (how Claude Code's extension works): reuses the M3 web bundle, full control of the UI. Recommended first.
-  - *Chat Participant API* (`@local-agent` in VS Code's built-in Chat view): feels like Copilot, uses VS Code's own tool-confirmation UI, but you depend on that API's shape. **Verify** against the current VS Code docs.
+  - *Chat Participant API* (`@wildcat-code-agent` in VS Code's built-in Chat view): feels like Copilot, uses VS Code's own tool-confirmation UI, but you depend on that API's shape. **Verify** against the current VS Code docs.
 - **Editor integration through client-side tools:**
   - Read tools see unsaved buffers.
   - Edits are applied as a `WorkspaceEdit` with a diff preview, so VS Code's undo works.
   - Commands run in an integrated terminal or task.
   - Context comes from selection, open files and diagnostics, with "Add selection to chat" and `@file` mentions.
 - **Inline completions** (ghost text, the most Copilot-like feature) are a separate path: an `InlineCompletionItemProvider` calling Ollama's fill-in-the-middle endpoint directly, with a model that supports it. `qwen2.5-coder:7b` reports the `insert` capability. This does not use the agent loop and needs its own latency work. Treat it as an optional stretch.
-- **Packaging:** `vsce package` produces a `.vsix`. Either require `local-agent` on PATH (simple, matches M2) or bundle the executable in a Windows-specific `.vsix`. Install with `code --install-extension`. Extensions install per user, so each Windows account installs it once. The Marketplace needs a publisher account; Open VSX is the alternative.
+- **Packaging:** `vsce package` produces a `.vsix`. Either require `wildcat-code-agent` on PATH (simple, matches M2) or bundle the executable in a Windows-specific `.vsix`. Install with `code --install-extension`. Extensions install per user, so each Windows account installs it once. The Marketplace needs a publisher account; Open VSX is the alternative.
 
 **Done when:** in VS Code you can ask a question about the open file, approve an edit as a diff, and undo it.
 

@@ -1,6 +1,6 @@
 """The system prompt steers small models away from tool calls for plain answers (seen with qwen2.5-coder:7b)."""
 
-from local_agent.core import loop
+from wildcat_code_agent.core import loop
 
 
 def test_the_system_prompt_asks_for_plain_answers_and_no_echo_commands():

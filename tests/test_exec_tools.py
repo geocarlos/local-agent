@@ -14,12 +14,12 @@ from types import SimpleNamespace
 import pytest
 from fakes import text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import Settings
-from local_agent.core import loop
-from local_agent.core.events import ApprovalRequest, Decision, ToolResult
-from local_agent.tools import builtin, process
-from local_agent.tools.registry import ToolContext
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import ApprovalRequest, Decision, ToolResult
+from wildcat_code_agent.tools import builtin, process
+from wildcat_code_agent.tools.registry import ToolContext
 
 HAS_POWERSHELL = shutil.which("pwsh") is not None or shutil.which("powershell") is not None
 requires_powershell = pytest.mark.skipif(not HAS_POWERSHELL, reason="no PowerShell on PATH")

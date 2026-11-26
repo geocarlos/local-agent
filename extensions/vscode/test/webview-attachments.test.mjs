@@ -1,5 +1,5 @@
 // The composer's editor context (T21), run without a DOM: the @ mention, the attachment list, and the ACP content
-// blocks a prompt is sent with. The module is the bundle's own file (src/local_agent/web/js/attachments.js).
+// blocks a prompt is sent with. The module is the bundle's own file (src/wildcat_code_agent/web/js/attachments.js).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -9,7 +9,7 @@ import {
   mentionAt,
   promptBlocks,
   removeMention,
-} from "../../../src/local_agent/web/js/attachments.js";
+} from "../../../src/wildcat_code_agent/web/js/attachments.js";
 
 const selection = { kind: "selection", uri: "file:///w/app.ts", name: "app.ts", startLine: 2, endLine: 4, text: "x = 1" };
 const file = { kind: "file", uri: "file:///w/notes.md", name: "notes.md" };

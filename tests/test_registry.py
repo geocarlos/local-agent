@@ -5,12 +5,12 @@ from typing import Annotated, Literal
 
 import pytest
 
-from local_agent import tools
-from local_agent.core.events import Preview
-from local_agent.permissions import Risk, needs_approval
-from local_agent.tools import Location, tool
-from local_agent.tools.edit_tools import MAX_PREVIEW_CHARS
-from local_agent.tools.registry import ToolContext
+from wildcat_code_agent import tools
+from wildcat_code_agent.core.events import Preview
+from wildcat_code_agent.permissions import Risk, needs_approval
+from wildcat_code_agent.tools import Location, tool
+from wildcat_code_agent.tools.edit_tools import MAX_PREVIEW_CHARS
+from wildcat_code_agent.tools.registry import ToolContext
 
 
 def registry_with(fn, **kwargs) -> dict:

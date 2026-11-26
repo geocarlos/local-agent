@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from local_agent import main
-from local_agent.config import (
+from wildcat_code_agent import main
+from wildcat_code_agent.config import (
     DEFAULT_HOST,
     DEFAULT_MODEL,
     DEFAULT_NUM_CTX,
@@ -20,7 +20,7 @@ from local_agent.config import (
     config_path,
     load_settings,
 )
-from local_agent.frontends import cli
+from wildcat_code_agent.frontends import cli
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
@@ -51,7 +51,7 @@ def test_settings_defaults_match_load_settings_defaults(tmp_path):
 
 def test_missing_config_file_is_defaults_when_not_given_explicitly(tmp_path, monkeypatch):
     # With no --config, a missing per-user file means defaults. Point the per-user path at a temp file.
-    monkeypatch.setattr("local_agent.config.config_path", lambda: tmp_path / "absent.toml")
+    monkeypatch.setattr("wildcat_code_agent.config.config_path", lambda: tmp_path / "absent.toml")
 
     assert load_settings(env={}) == Settings()
 
@@ -266,12 +266,12 @@ def test_main_reports_a_missing_explicit_config_on_stderr(tmp_path, capsys):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="the %APPDATA% location is Windows-specific")
 def test_config_path_is_under_appdata_on_windows():
-    assert config_path() == Path(os.environ["APPDATA"]) / "local-agent" / "config.toml"
+    assert config_path() == Path(os.environ["APPDATA"]) / "wildcat-code-agent" / "config.toml"
 
 
 def test_config_path_is_named_config_toml():
     assert config_path().name == "config.toml"
-    assert config_path().parent.name == "local-agent"
+    assert config_path().parent.name == "wildcat-code-agent"
 
 def test_test_command_defaults_to_none_and_is_read_from_the_file(tmp_path):
     empty = write_config(tmp_path, "")
@@ -343,3 +343,67 @@ def test_main_exits_2_for_an_unknown_profile_flag(tmp_path, capsys):
 
     assert info.value.code == 2
     assert "--profile must be one of" in capsys.readouterr().err
+
+
+def _legacy_with_config(tmp_path):
+    legacy = tmp_path / "local-agent"
+    (legacy / "sessions").mkdir(parents=True)
+    (legacy / "config.toml").write_text('model = "m"\n', encoding="utf-8")
+    return legacy
+
+
+def test_adopt_legacy_folder_moves_the_old_folder(tmp_path, monkeypatch):
+    from wildcat_code_agent.config import ENV_DATA_DIR, adopt_legacy_folder
+
+    monkeypatch.delenv(ENV_DATA_DIR, raising=False)
+    legacy = _legacy_with_config(tmp_path)
+    folder = tmp_path / "wildcat-code-agent"
+
+    assert adopt_legacy_folder(folder, legacy) == folder
+    assert (folder / "config.toml").read_text(encoding="utf-8") == 'model = "m"\n'
+    assert (folder / "sessions").is_dir()
+    assert not legacy.exists()
+
+
+def test_adopt_legacy_folder_moves_nothing_while_the_data_folder_is_overridden(tmp_path):
+    from wildcat_code_agent.config import adopt_legacy_folder
+
+    legacy = _legacy_with_config(tmp_path)  # the conftest sets the data-folder override
+    folder = tmp_path / "wildcat-code-agent"
+
+    assert adopt_legacy_folder(folder, legacy) == folder
+    assert legacy.exists() and not folder.exists()
+
+
+def test_adopt_legacy_folder_keeps_an_existing_new_folder(tmp_path, monkeypatch):
+    from wildcat_code_agent.config import ENV_DATA_DIR, adopt_legacy_folder
+
+    monkeypatch.delenv(ENV_DATA_DIR, raising=False)
+    legacy = _legacy_with_config(tmp_path)
+    folder = tmp_path / "wildcat-code-agent"
+    folder.mkdir()
+
+    assert adopt_legacy_folder(folder, legacy) == folder
+    assert legacy.exists() and not (folder / "config.toml").exists()
+
+
+def test_adopt_legacy_folder_without_a_legacy_folder(tmp_path, monkeypatch):
+    from wildcat_code_agent.config import ENV_DATA_DIR, adopt_legacy_folder
+
+    monkeypatch.delenv(ENV_DATA_DIR, raising=False)
+    folder = tmp_path / "wildcat-code-agent"
+    assert adopt_legacy_folder(folder, tmp_path / "local-agent") == folder
+    assert not folder.exists()
+
+
+def test_adopt_legacy_folder_uses_the_old_folder_when_the_move_fails(tmp_path, monkeypatch):
+    from wildcat_code_agent import config as config_module
+
+    monkeypatch.delenv(config_module.ENV_DATA_DIR, raising=False)
+    legacy = _legacy_with_config(tmp_path)
+
+    def refuse(src, dst):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(config_module.os, "replace", refuse)
+    assert config_module.adopt_legacy_folder(tmp_path / "wildcat-code-agent", legacy) == legacy

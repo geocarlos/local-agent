@@ -1,11 +1,11 @@
 {
-  "name": "local-agent-vscode",
-  "displayName": "local-agent",
-  "description": "Chat with the local-agent coding assistant (Ollama) in a VS Code panel.",
+  "name": "wildcat-code-agent-vscode",
+  "displayName": "Wildcat Code Agent",
+  "description": "Chat with the Wildcat Code Agent coding assistant (Ollama) in a VS Code panel.",
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "publisher": "local-agent",
+  "publisher": "wildcat-code-agent",
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.146.0"
@@ -19,33 +19,33 @@
   "contributes": {
     "commands": [
       {
-        "command": "localAgent.openChat",
-        "title": "local-agent: Open chat"
+        "command": "wildcatCodeAgent.openChat",
+        "title": "Wildcat Code Agent: Open chat"
       },
       {
-        "command": "localAgent.addSelection",
-        "title": "Local Agent: Add Selection to Chat"
+        "command": "wildcatCodeAgent.addSelection",
+        "title": "Wildcat Code Agent: Add Selection to Chat"
       }
     ],
     "configuration": {
-      "title": "local-agent",
+      "title": "Wildcat Code Agent",
       "properties": {
-        "localAgent.command": {
+        "wildcatCodeAgent.command": {
           "type": "array",
           "items": {
             "type": "string"
           },
           "default": [
-            "local-agent"
+            "wildcat-code-agent"
           ],
-          "markdownDescription": "The command that starts the agent. `serve --stdio` and `--cwd <workspace folder>` are added. The default `local-agent` must be on PATH. For development from the repo, use `[\"uv\", \"run\", \"--project\", \"C:\\path\\to\\local-agent\", \"local-agent\"]`. Reload the window after a change."
+          "markdownDescription": "The command that starts the agent. `serve --stdio` and `--cwd <workspace folder>` are added. The default `wildcat-code-agent` must be on PATH. For development from the repo, use `[\"uv\", \"run\", \"--project\", \"C:\\path\\to\\wildcat-code-agent\", \"wildcat-code-agent\"]`. Reload the window after a change."
         }
       }
     },
     "menus": {
       "editor/context": [
         {
-          "command": "localAgent.addSelection",
+          "command": "wildcatCodeAgent.addSelection",
           "when": "editorHasSelection",
           "group": "navigation"
         }
@@ -53,7 +53,7 @@
     },
     "keybindings": [
       {
-        "command": "localAgent.addSelection",
+        "command": "wildcatCodeAgent.addSelection",
         "key": "ctrl+alt+l",
         "when": "editorHasSelection"
       }

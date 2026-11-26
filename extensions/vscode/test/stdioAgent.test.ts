@@ -94,7 +94,7 @@ test("send refuses when the agent is not running, and start refuses a second run
 
 test("a program that does not exist reports that it cannot start", async () => {
   const { agent, exits } = echoAgent();
-  agent.start("definitely-not-a-real-local-agent-program", ["serve"], process.cwd());
+  agent.start("definitely-not-a-real-wildcat-code-agent-program", ["serve"], process.cwd());
   await waitFor(() => exits.length === 1, "the start error");
   assert.match(exits[0], /^Cannot start the agent: /);
   assert.equal(agent.running, false);

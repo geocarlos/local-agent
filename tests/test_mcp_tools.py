@@ -13,10 +13,10 @@ import ollama
 import pytest
 from mcp.types import Tool as McpTool
 
-from local_agent.config import McpServer, Settings
-from local_agent.permissions import Risk
-from local_agent.tools import profiles
-from local_agent.tools.mcp_tools import (
+from wildcat_code_agent.config import McpServer, Settings
+from wildcat_code_agent.permissions import Risk
+from wildcat_code_agent.tools import profiles
+from wildcat_code_agent.tools.mcp_tools import (
     DESCRIPTION_CHARS,
     MAX_TOOL_NAME_CHARS,
     McpRuntime,
@@ -25,8 +25,8 @@ from local_agent.tools.mcp_tools import (
     qualified_name,
     result_text,
 )
-from local_agent.tools.output import printable, without_controls
-from local_agent.tools.registry import Tool, ToolContext, add_tool
+from wildcat_code_agent.tools.output import printable, without_controls
+from wildcat_code_agent.tools.registry import Tool, ToolContext, add_tool
 
 SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}}
 

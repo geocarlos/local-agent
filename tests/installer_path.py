@@ -1,4 +1,4 @@
-"""Python mirror of the PATH edits in packaging/local-agent.iss ([Code] section).
+"""Python mirror of the PATH edits in packaging/wildcat-code-agent.iss ([Code] section).
 
 The installer is Pascal, and no Inno Setup compiler runs in tests. These functions do the same steps
 in the same order, so the rules can be tested here. Keep them in step with NormalizeDir, PathHasDir,

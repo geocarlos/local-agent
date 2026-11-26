@@ -5,9 +5,9 @@ import ollama
 import pytest
 from fakes import FakeOllama, text_reply
 
-from local_agent.config import Settings
-from local_agent.core.model import describe_error, probe
-from local_agent.frontends import cli
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.core.model import describe_error, probe
+from wildcat_code_agent.frontends import cli
 
 
 def test_probe_warns_when_tools_is_missing(fake_ollama):
@@ -63,7 +63,7 @@ def test_startup_shows_the_capability_warning_and_still_runs_the_prompt(monkeypa
 
     out = capsys.readouterr().out
     assert "does not report the 'tools' capability" in out
-    assert out.index("Local Agent ready") < out.index("does not report")
+    assert out.index("Wildcat Code Agent ready") < out.index("does not report")
 
 
 def test_startup_with_no_tools_capability_sends_no_warning_when_tools_present(monkeypatch, capsys):

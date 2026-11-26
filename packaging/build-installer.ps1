@@ -1,8 +1,8 @@
-# Builds the machine-wide installer: dist\installer\local-agent-<version>-setup.exe.
+# Builds the machine-wide installer: dist\installer\wildcat-code-agent-<version>-setup.exe.
 # Run it from any folder; it works from the repo root.
 #
-# Steps: build dist\local-agent with packaging\build.ps1 (only when it is missing, or with -Rebuild),
-# then compile packaging\local-agent.iss with Inno Setup 6 (ISCC.exe). The version comes from pyproject.toml.
+# Steps: build dist\wildcat-code-agent with packaging\build.ps1 (only when it is missing, or with -Rebuild),
+# then compile packaging\wildcat-code-agent.iss with Inno Setup 6 (ISCC.exe). The version comes from pyproject.toml.
 #
 # Requires Inno Setup 6 (ISCC.exe). It is not bundled and is not installed by this script:
 #   winget install --id JRSoftware.InnoSetup -e
@@ -51,9 +51,9 @@ Install it, then run this script again:
 }
 Write-Host "Using $Iscc"
 
-$Exe = Join-Path $Root "dist\local-agent\local-agent.exe"
+$Exe = Join-Path $Root "dist\wildcat-code-agent\wildcat-code-agent.exe"
 if ($Rebuild -or -not (Test-Path $Exe)) {
-    Write-Host "Building dist\local-agent with packaging\build.ps1"
+    Write-Host "Building dist\wildcat-code-agent with packaging\build.ps1"
     & (Join-Path $PSScriptRoot "build.ps1")
 } else {
     # Reusing an existing build: warn if the source changed after it was built.
@@ -63,17 +63,17 @@ if ($Rebuild -or -not (Test-Path $Exe)) {
         Where-Object { $_.LastWriteTime -gt $ExeTime -and $_.FullName -notmatch '\\__pycache__\\' })
     if ($Newer.Count -gt 0) {
         $Names = ($Newer | Select-Object -First 3 -ExpandProperty Name) -join ", "
-        Write-Warning ("The exe may be stale: {0} file(s) under src\ are newer than it, for example {1}. Run again with -Rebuild to rebuild dist\local-agent." -f $Newer.Count, $Names)
+        Write-Warning ("The exe may be stale: {0} file(s) under src\ are newer than it, for example {1}. Run again with -Rebuild to rebuild dist\wildcat-code-agent." -f $Newer.Count, $Names)
     }
 }
 if (-not (Test-Path $Exe)) { throw "Expected $Exe. Run packaging\build.ps1 first." }
 
-$Script = Join-Path $PSScriptRoot "local-agent.iss"
+$Script = Join-Path $PSScriptRoot "wildcat-code-agent.iss"
 Write-Host "Compiling $Script (version $Version)"
 & $Iscc "/DAppVersion=$Version" $Script
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 
-$Setup = Join-Path $Root "dist\installer\local-agent-$Version-setup.exe"
+$Setup = Join-Path $Root "dist\installer\wildcat-code-agent-$Version-setup.exe"
 if (-not (Test-Path $Setup)) { throw "Expected $Setup after the compile" }
 $Megabytes = (Get-Item $Setup).Length / 1MB
 Write-Host ("Built {0} ({1:N1} MB)" -f $Setup, $Megabytes)

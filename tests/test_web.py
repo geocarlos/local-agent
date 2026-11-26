@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from fakes import FakeOllama, text_reply, tool_reply
-from local_agent.config import Settings
-from local_agent.frontends import web
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import web
 
 PORT = 8765
 TIMEOUT_S = 5
@@ -114,7 +114,7 @@ def test_the_servers_own_origins_are_accepted(app_client, origin):
 def test_the_page_does_not_open_the_agent_and_has_no_docs_routes(app_client):
     response = app_client.get("/")
     assert response.status_code == 200
-    assert "<title>local-agent</title>" in response.text and TOKEN not in response.text
+    assert "<title>Wildcat Code Agent</title>" in response.text and TOKEN not in response.text
     for path in ("/docs", "/openapi.json", "/redoc"):
         assert app_client.get(path).status_code == 404
 

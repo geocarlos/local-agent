@@ -1,4 +1,4 @@
-// The agent process: `<localAgent.command> serve --stdio --cwd <folder>`, one JSON message per line each way.
+// The agent process: `<wildcatCodeAgent.command> serve --stdio --cwd <folder>`, one JSON message per line each way.
 // Apart from the child process (injected through spawn, so tests can run a plain node script) it has no vscode import.
 
 import { ChildProcess, spawn as nodeSpawn } from "node:child_process";
@@ -13,11 +13,11 @@ export interface AgentHandlers {
 }
 
 // The program and arguments for the server. `command` is the setting: the first item is the program, the rest
-// are its arguments (for example ["uv", "run", "--project", "<repo>", "local-agent"]).
+// are its arguments (for example ["uv", "run", "--project", "<repo>", "wildcat-code-agent"]).
 export function serveArgv(command: string[], folder: string): { program: string; args: string[] } {
   const [program, ...rest] = command.filter((item) => item.trim().length > 0);
   if (!program) {
-    throw new Error('localAgent.command is empty. Set it to the local-agent command, for example ["local-agent"].');
+    throw new Error('wildcatCodeAgent.command is empty. Set it to the wildcat-code-agent command, for example ["wildcat-code-agent"].');
   }
   return { program, args: [...rest, "serve", "--stdio", "--cwd", folder] };
 }

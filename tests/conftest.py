@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from fakes import FakeOllama
-from local_agent import config
-from local_agent.tools.plugins import ENTRY_POINT_GROUP
-from local_agent.tools.registry import REGISTRY
+from wildcat_code_agent import config
+from wildcat_code_agent.tools.plugins import ENTRY_POINT_GROUP
+from wildcat_code_agent.tools.registry import REGISTRY
 
 _real_entry_points = importlib.metadata.entry_points
 
@@ -20,16 +20,16 @@ def isolated_user_folders(tmp_path_factory, monkeypatch):
     data folder (saved sessions) point at temp folders. Subprocesses inherit the environment variable."""
     base = tmp_path_factory.mktemp("user-folders")
     monkeypatch.setattr(config, "config_path", lambda: base / "config" / "config.toml")
-    monkeypatch.setenv("LOCAL_AGENT_DATA_DIR", str(base / "data"))
+    monkeypatch.setenv("WILDCAT_CODE_AGENT_DATA_DIR", str(base / "data"))
 
 
 @pytest.fixture(autouse=True)
 def isolated_plugins(tmp_path_factory, monkeypatch):
     """Keep every test away from the real user config folder and from installed plugins.
 
-    The per-user tools folder points at a path that does not exist, and the local_agent.tools entry
+    The per-user tools folder points at a path that does not exist, and the wildcat_code_agent.tools entry
     points are empty unless a test installs its own. Afterwards the tool registry and the imported
-    plugin modules (and the local_agent_plugins stub package) are removed, so a plugin tool never leaks
+    plugin modules (and the wildcat_code_agent_plugins stub package) are removed, so a plugin tool never leaks
     into another test.
     """
     missing = tmp_path_factory.mktemp("no-user-config") / "tools"
@@ -46,7 +46,7 @@ def isolated_plugins(tmp_path_factory, monkeypatch):
     REGISTRY.clear()
     REGISTRY.update(registry_before)
     for name in [n for n in sys.modules
-                 if n == "local_agent_plugins" or n.startswith(("local_agent_plugins.", "plugin_fixtures."))]:
+                 if n == "wildcat_code_agent_plugins" or n.startswith(("wildcat_code_agent_plugins.", "plugin_fixtures."))]:
         del sys.modules[name]
 
 

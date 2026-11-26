@@ -19,7 +19,7 @@ export async function runAddSelection(): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   assert.ok(folder, "the test workspace is open");
   const commands = await vscode.commands.getCommands(true);
-  assert.ok(commands.includes("localAgent.addSelection"), "the addSelection command is registered");
+  assert.ok(commands.includes("wildcatCodeAgent.addSelection"), "the addSelection command is registered");
 
   const file = path.join(folder, "context-check.ts");
   fs.writeFileSync(file, "const alpha = 1;\nconst beta = 2;\n", "utf8");
@@ -29,12 +29,12 @@ export async function runAddSelection(): Promise<void> {
 
     // Nothing selected: the command adds nothing.
     editor.selection = new vscode.Selection(0, 0, 0, 0);
-    const none = await vscode.commands.executeCommand("localAgent.addSelection");
+    const none = await vscode.commands.executeCommand("wildcatCodeAgent.addSelection");
     assert.equal(none, undefined, "an empty selection adds nothing");
 
     // "beta" on line 2: one line, 1-based, with the text as the editor has it.
     editor.selection = new vscode.Selection(1, 6, 1, 10);
-    const added = (await vscode.commands.executeCommand("localAgent.addSelection")) as SelectionResult;
+    const added = (await vscode.commands.executeCommand("wildcatCodeAgent.addSelection")) as SelectionResult;
     assert.equal(added.kind, "selection");
     assert.equal(added.text, "beta");
     assert.equal(added.startLine, 2);
@@ -44,7 +44,7 @@ export async function runAddSelection(): Promise<void> {
 
     // Two lines: the range is both lines.
     editor.selection = new vscode.Selection(0, 0, 1, 10);
-    const lines = (await vscode.commands.executeCommand("localAgent.addSelection")) as SelectionResult;
+    const lines = (await vscode.commands.executeCommand("wildcatCodeAgent.addSelection")) as SelectionResult;
     assert.equal(lines.startLine, 1);
     assert.equal(lines.endLine, 2);
     assert.equal(lines.text, "const alpha = 1;\nconst beta");
@@ -52,7 +52,7 @@ export async function runAddSelection(): Promise<void> {
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
-        if (tab.label === "local-agent") {
+        if (tab.label === "wildcat-code-agent") {
           await vscode.window.tabGroups.close(tab);
         }
       }
