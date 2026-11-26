@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "publisher": "local-agent",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.146.0"
   },
