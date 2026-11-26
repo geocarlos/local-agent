@@ -118,7 +118,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 
 ## M4: VS Code extension
 
-### T19 Extension scaffold and chat panel: `in review`
+### ✅ T19 Extension scaffold and chat panel: `done`
 - **Verify first:** current VS Code Chat Participant API shape (for the later option; the first UI is our own webview).
 - TypeScript extension in `extensions/vscode/`; spawns `local-agent serve --stdio`; webview panel reuses the T16 bundle.
 - **Done when:** you can chat in a VS Code panel and approve a core-side write.
