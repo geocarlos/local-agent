@@ -4,7 +4,7 @@
   "description": "Chat with the Wildcat Code Agent coding assistant (Ollama) in a VS Code panel.",
   "version": "0.1.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "publisher": "wildcat-code-agent",
   "repository": {
     "type": "git",
