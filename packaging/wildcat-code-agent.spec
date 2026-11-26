@@ -1,10 +1,11 @@
-# PyInstaller spec for wildcat-code-agent, in --onedir mode, with two executables that share one folder:
+# PyInstaller spec for wildcat-code-agent, in --onedir mode, with three executables that share one folder:
 #   wildcat-code-agent.exe      a console app: chat, serve --stdio, serve --web and gui (run from a terminal).
+#   wca.exe                     the same console app under the short name `wca` (T24), so it is on PATH after an install.
 #   wildcat-code-agent-gui.exe  the same program with no console window (packaging/gui_launcher.py): gui only,
 #                        for the Start menu (T18). Its output goes to gui.log in the data folder.
 #
 # Run from the repo root with packaging\build.ps1 (it runs `pyinstaller packaging/wildcat-code-agent.spec`).
-# Output: dist/wildcat-code-agent/ with both exes and the files they need. MERGE keeps the shared modules and
+# Output: dist/wildcat-code-agent/ with the three exes and the files they need. MERGE keeps the shared modules and
 # binaries (pythonnet, WebView2 loader, uvicorn, ...) in one copy.
 
 from pathlib import Path
@@ -113,8 +114,29 @@ window_exe = EXE(  # noqa: F821
     codesign_identity=None,
     entitlements_file=None,
 )
+# wca.exe (T24): the same console program under the short name. It reuses the console analysis and PYZ, so it has
+# the same code and shares _internal\. Its name is the only difference: the program reads its command name from
+# sys.argv[0] (frontends/cli.py command_name), which the bootloader sets to the path it was started with.
+wca_exe = EXE(  # noqa: F821
+    console_pyz,
+    console_analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="wca",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
 coll = COLLECT(  # noqa: F821
     console_exe,
+    wca_exe,
     console_analysis.binaries,
     console_analysis.datas,
     window_exe,

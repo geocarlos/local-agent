@@ -1,5 +1,7 @@
 """The `wildcat-code-agent` subcommands (T11): chat (the default), serve --stdio, serve --web and gui (T18)."""
 
+import sys
+
 import pytest
 
 from wildcat_code_agent import main
@@ -168,3 +170,60 @@ def test_serve_web_flag_mistakes_exit_2(argv, message, capsys):
         main(argv)
     assert exit_info.value.code == 2
     assert message in capsys.readouterr().err
+
+
+# --- the name the user typed (T24: wca is a second name for wildcat-code-agent) ---------------
+
+
+@pytest.mark.parametrize("argv0, expected", [
+    ("wca", "wca"),
+    (r"C:\Program Files\wildcat-code-agent\wca.exe", "wca"),
+    ("WCA.EXE", "wca"),
+    ("wildcat-code-agent", "wildcat-code-agent"),
+    (r"C:\Program Files\wildcat-code-agent\wildcat-code-agent.exe", "wildcat-code-agent"),
+    ("/usr/local/bin/wca", "wca"),
+    (r"C:\x\__main__.py", "wildcat-code-agent"),  # python -m wildcat_code_agent
+    (r"C:\x\pytest.exe", "wildcat-code-agent"),
+    ("wca-tools.exe", "wildcat-code-agent"),
+    ("", "wildcat-code-agent"),
+])
+def test_command_name_is_the_typed_name_or_the_long_name(monkeypatch, argv0, expected):
+    from wildcat_code_agent.frontends import cli
+
+    monkeypatch.setattr(sys, "argv", [argv0, "--help"])
+    assert cli.command_name() == expected
+
+
+def test_help_usage_line_names_the_command_typed(monkeypatch, capsys):
+    for argv0, name in (("wca", "wca"), ("wildcat-code-agent.exe", "wildcat-code-agent")):
+        monkeypatch.setattr(sys, "argv", [argv0])
+        with pytest.raises(SystemExit) as exit_info:
+            main(["--help"])
+        assert exit_info.value.code == 0
+        out = capsys.readouterr().out
+        assert out.startswith(f"usage: {name} ")
+        assert f"example: {name} serve --stdio --cwd" in out
+
+
+def test_serve_help_names_the_command_typed(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["wca.exe"])
+    with pytest.raises(SystemExit):
+        main(["serve", "--help"])
+    assert capsys.readouterr().out.startswith("usage: wca serve ")
+
+
+def test_subcommand_order_hint_names_the_command_typed(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["wca"])
+    with pytest.raises(SystemExit):
+        main(["--cwd", "X", "serve", "--stdio"])
+    err = capsys.readouterr().err
+    assert "`wca serve ...`" in err
+    assert "`wca serve --stdio --cwd X`" in err
+    assert "wildcat-code-agent" not in err
+
+
+def test_python_dash_m_falls_back_to_the_long_name(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", [r"C:\x\wildcat_code_agent\__main__.py"])
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert capsys.readouterr().out.startswith("usage: wildcat-code-agent ")

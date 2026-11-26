@@ -216,3 +216,14 @@ def test_smoke_script_requires_ctypes_and_starts_serve_web_on_its_own_process():
     assert "WebSocket: ws://127" in text  # the banner the script waits for
     assert "$Web.Kill()" in text  # stops its own process by handle
     assert "Stop-Process" not in text and "taskkill" not in text.lower() and "Get-Process" not in text
+
+
+def test_smoke_step_runs_the_script_that_checks_wca(wf):
+    # T24: the smoke step runs packaging\smoke-exe.ps1, and that script checks wca.exe (--help exit 0, the usage
+    # line, a console subsystem). The workflow itself does not need to name wca.
+    smoke = [step for step in _steps(wf["jobs"]["build"]) if "smoke-exe.ps1" in step.get("run", "")]
+    assert len(smoke) == 1
+    text = (ROOT / "packaging" / "smoke-exe.ps1").read_text(encoding="utf-8")
+    assert 'Join-Path (Split-Path -Parent $Exe) "wca.exe"' in text
+    assert "usage: wca " in text
+    assert "Get-PeSubsystem $WcaExe" in text

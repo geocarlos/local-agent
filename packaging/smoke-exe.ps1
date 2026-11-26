@@ -14,6 +14,8 @@
 #
 # 5. wildcat-code-agent-gui.exe (T18) is a GUI-subsystem program, and its `--help` exits 0. Opening a window is not
 #    tested here (a CI runner has no screen to look at); see tests/test_gui_window.py and the T18 notes.
+# 6. wca.exe (T24), the short name of the console exe: `wca.exe --help` exits 0, its usage line says `usage: wca `,
+#    and it is a console program like wildcat-code-agent.exe.
 #
 # Usage: packaging\smoke-exe.ps1 [-Exe <path>]   (default: dist\wildcat-code-agent\wildcat-code-agent.exe under the repo root)
 
@@ -126,15 +128,16 @@ $Web.WaitForExit(30000) | Out-Null
 
 # 5. The windowed exe (T18): wildcat-code-agent-gui.exe must be a GUI-subsystem program (no console window), and
 #    `--help` through the gui command must exit 0 (its output goes nowhere, as it has no console).
+function Get-PeSubsystem([string]$Path) {
+    $Bytes = [System.IO.File]::ReadAllBytes($Path)
+    $PeOffset = [BitConverter]::ToInt32($Bytes, 0x3C)
+    return [BitConverter]::ToUInt16($Bytes, $PeOffset + 24 + 68)  # 2 = GUI, 3 = console
+}
+
 $GuiExe = Join-Path (Split-Path -Parent $Exe) "wildcat-code-agent-gui.exe"
 if (-not (Test-Path $GuiExe)) {
     $Failures += "wildcat-code-agent-gui.exe is not in the build folder"
 } else {
-    function Get-PeSubsystem([string]$Path) {
-        $Bytes = [System.IO.File]::ReadAllBytes($Path)
-        $PeOffset = [BitConverter]::ToInt32($Bytes, 0x3C)
-        return [BitConverter]::ToUInt16($Bytes, $PeOffset + 24 + 68)  # 2 = GUI, 3 = console
-    }
     $ConsoleSubsystem = Get-PeSubsystem $Exe
     $GuiSubsystem = Get-PeSubsystem $GuiExe
     if ($ConsoleSubsystem -ne 3) { $Failures += "wildcat-code-agent.exe is not a console program (subsystem $ConsoleSubsystem)" }
@@ -143,6 +146,21 @@ if (-not (Test-Path $GuiExe)) {
     if (-not $GuiHelp.WaitForExit(120000)) { $GuiHelp.Kill(); $Failures += "wildcat-code-agent-gui.exe --help did not exit within 120 s" }
     elseif ($GuiHelp.ExitCode -ne 0) { $Failures += "wildcat-code-agent-gui.exe --help: exit $($GuiHelp.ExitCode)" }
     else { Write-Host "wildcat-code-agent-gui.exe: windowed subsystem, --help exit 0" }
+}
+
+# 6. wca.exe (T24): the console exe under its short name. Same program, so --help must exit 0 and name `wca`.
+$WcaExe = Join-Path (Split-Path -Parent $Exe) "wca.exe"
+if (-not (Test-Path $WcaExe)) {
+    $Failures += "wca.exe is not in the build folder"
+} else {
+    $WcaHelpOut = Join-Path $Work "wca-help.txt"
+    $WcaHelp = Start-Process -FilePath $WcaExe -ArgumentList "--help" -WorkingDirectory $Work -NoNewWindow -PassThru `
+        -RedirectStandardOutput $WcaHelpOut -RedirectStandardError (Join-Path $Work "wca-help-err.txt")
+    if (-not $WcaHelp.WaitForExit(120000)) { $WcaHelp.Kill(); $Failures += "wca.exe --help did not exit within 120 s" }
+    elseif ($WcaHelp.ExitCode -ne 0) { $Failures += "wca.exe --help: exit $($WcaHelp.ExitCode)" }
+    elseif ((Get-Content $WcaHelpOut -Raw) -notmatch "usage: wca ") { $Failures += "wca.exe --help: no 'usage: wca' line" }
+    elseif ((Get-PeSubsystem $WcaExe) -ne 3) { $Failures += "wca.exe is not a console program (subsystem $(Get-PeSubsystem $WcaExe))" }
+    else { Write-Host "wca.exe: --help exit 0, usage names wca, console subsystem" }
 }
 
 Write-Host "Module results (plugin imports in the frozen app):"

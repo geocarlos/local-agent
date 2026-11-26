@@ -210,6 +210,25 @@ def test_iss_removes_path_only_after_uninstall(iss_text):
     assert "usPostUninstall" in iss_text
 
 
+def test_iss_installs_wca_exe_with_the_folder_wildcard(iss_text):
+    # T24: wca.exe is in dist\wildcat-code-agent with the other exes, so it is on the PATH after an install.
+    # The [Files] line is a folder wildcard with no Excludes; nothing in the script names the exes one by one.
+    files = iss_text.split("[Files]", 1)[1].split("[Icons]", 1)[0]
+    entries = [line for line in files.splitlines() if line.startswith("Source:")]
+    assert len(entries) == 1
+    assert entries[0].startswith('Source: "..\\dist\\wildcat-code-agent\\*";')
+    assert "Excludes" not in entries[0]
+    assert "wca.exe" not in iss_text  # the wildcard covers it; a per-file entry would be a second place to forget
+
+
+def test_spec_builds_wca_as_a_console_exe_in_the_same_folder():
+    spec = (ROOT / "packaging" / "wildcat-code-agent.spec").read_text(encoding="utf-8")
+    block = spec.split('name="wca"', 1)[1].split(")", 1)[0]
+    assert "console=True" in block
+    collect = spec.split("coll = COLLECT(", 1)[1]
+    assert "wca_exe," in collect  # collected with the other exes, so it lands in dist\wildcat-code-agent\
+
+
 # --- The build script -----------------------------------------------------------------------
 
 

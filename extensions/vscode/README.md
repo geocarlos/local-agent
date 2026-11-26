@@ -40,8 +40,10 @@ If VS Code says it cannot find `wildcat-code-agent`, the app is not on PATH for 
 ## Settings
 
 - `wildcatCodeAgent.command`: the command that starts the agent. It is a list: the first item is the program and
-  the rest are its arguments. The default is `["wildcat-code-agent"]`, which must be an `.exe` on PATH. To use a
-  program that is not on PATH, give its full path. Reload the window after a change:
+  the rest are its arguments. The default is `["wildcat-code-agent"]`, which must be an `.exe` on PATH. `["wca"]`
+  runs the same program under its short name (`wca.exe`, also installed on PATH); use it if you prefer the short
+  name, since the default stays the long one. To use a program that is not on PATH, give its full path. Reload the
+  window after a change:
 
   ```json
   "wildcatCodeAgent.command": ["C:\Program Files\wildcat-code-agent\wildcat-code-agent.exe"]
