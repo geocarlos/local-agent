@@ -172,6 +172,27 @@ uv run local-agent gui --cwd C:\src\my-project
 
 Status: tested on Windows 11 with Python 3.14 (pywebview 6.2.1, pythonnet 3.2.1); the frozen build was run on the same machine, and the installer compiles (it was not installed here). Only Windows is supported for the window; on other systems `local-agent serve --web` and a browser do the same job.
 
+### VS Code extension (development)
+
+The extension in `extensions/vscode/` opens a chat panel in VS Code. The panel is the same web UI (the bundle in `src/local_agent/web/`), and it talks to `local-agent serve --stdio` through the extension host instead of a WebSocket. Approvals work the same way: a write shows the diff and waits for your answer.
+
+Build and run it from the repo (Node 26 and npm, and `uv`):
+
+```powershell
+cd extensions\vscode
+npm ci                    # once: installs the TypeScript and VS Code type packages
+npm run compile           # copies the web bundle to webview\ and compiles src\ to out\
+npm test                  # the extension's own tests (no VS Code needed)
+npm run test:e2e          # starts VS Code with the extension and checks the panel (set VSCODE_PATH to Code.exe)
+```
+
+To try the panel, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **local-agent: Open chat** from the Command Palette.
+
+- **Which agent runs:** the setting `localAgent.command` (an array; default `["local-agent"]`, which must be on PATH). The extension appends `serve --stdio --cwd <the folder>`. The command is spawned without a shell (`shell: false`), so the first item must be an `.exe` on PATH or a full path; a `.cmd` or `.bat` shim will not start. To run the agent from this repo instead, set it in the development window's settings, for example `["uv", "run", "--project", "C:\\src\\local-agent", "local-agent"]`. Reload the window after a change.
+- **Folder:** the panel works in the first workspace folder. With no folder open, it says so and does not start the agent.
+- **Logs:** the output channel **local-agent** shows the command line and the agent's stderr.
+- **Not yet:** packaging (`vsce package`, a `.vsix` that uses the PATH command) is T22; the editor tools and context are T20 and T21. Saved chats and settings work through the same server.
+
 ## Configuration
 
 Settings come from four places, highest priority first:
@@ -377,6 +398,7 @@ src/local_agent/
   config_write.py      # the settings editor's allowlist and its write to config.toml (tomlkit: comments and the layout are kept)
   atomic.py            # atomic file writes (temp file, flush, os.replace) used by sessions and the settings editor
   web/                 # the web UI: index.html, style.css and js/ (transport.js, acp.js, chat.js, panels.js, main.js); no build step
+  extensions/vscode/   # the VS Code extension (T19): the panel, the stdio relay and the node tests; see the VS Code section
   config.py            # Settings, defaults, the TOML file, OLLAMA_HOST, validation and precedence (tool profile names, network switch)
   core/loop.py         # agent loop: streams one user turn of model/tool rounds; emits events, asks the approver, honours cancel
   core/events.py       # event types (text_delta, thinking_delta, tool_call, tool_started, tool_result, approval_request, turn_done, error), Usage

@@ -30,3 +30,25 @@ jobs:
         env:
           LOCAL_AGENT_REQUIRE_WINDOW: "1"
         run: uv run --locked pytest tests/test_gui_window.py -v
+
+  # The VS Code extension (T19): TypeScript compile and the node tests. The tests do not start VS Code.
+  extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile and test
+        run: npm test
