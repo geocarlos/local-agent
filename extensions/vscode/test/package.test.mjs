@@ -32,7 +32,13 @@ test("package.json has the fields vsce needs", () => {
   assert.ok(manifest.displayName, "displayName");
   assert.ok(manifest.description, "description");
   assert.ok(manifest.repository?.url, "repository.url (vsce would need --allow-missing-repository without it)");
-  assert.ok(typeof manifest.license === "string" && manifest.license.length > 0, "license");
+  assert.equal(manifest.license, "Apache-2.0", "license");
+  // The extension's LICENSE is a copy of the repository's (vsce reads it from the extension folder).
+  assert.equal(
+    readFileSync(join(root, "LICENSE"), "utf8"),
+    readFileSync(join(root, "..", "..", "LICENSE"), "utf8"),
+    "extensions/vscode/LICENSE matches the repository LICENSE",
+  );
   assert.ok(existsSync(join(root, "README.md")), "README.md in the extension folder");
 });
 
@@ -63,6 +69,7 @@ test("the .vsix carries what runs and leaves out the sources and tests", () => {
     for (const required of [
       "package.json",
       "README.md",
+      "LICENSE",
       "media/icon.png",
       manifest.main.replace(/^\.\//, ""),
       "webview/index.html",

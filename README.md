@@ -233,7 +233,7 @@ npm run test:e2e          # starts VS Code with the extension and checks the pan
 npm run package           # compiles, then writes wildcat-code-agent-vscode-<version>.vsix in extensions\vscode
 ```
 
-`npm run package` runs `vsce` (`@vscode/vsce`, pinned in `package.json`). The .vsix carries `out\src`, `webview\`, `media\`, `package.json` and the README. The sources, tests, source maps and `node_modules` are left out (`extensions/vscode/.vscodeignore`). The version is the one in `extensions/vscode/package.json`. `vsce` warns that there is no LICENSE file: the extension's license is not chosen yet.
+`npm run package` runs `vsce` (`@vscode/vsce`, pinned in `package.json`). The .vsix carries `out\src`, `webview\`, `media\`, `package.json` and the README. The sources, tests, source maps and `node_modules` are left out (`extensions/vscode/.vscodeignore`). The version is the one in `extensions/vscode/package.json`. The .vsix carries `LICENSE` (a copy of the repository's).
 
 To try the panel from the repo, open `extensions\vscode` in VS Code and press F5 (Run Extension). In the new window, open a folder and run **wildcat-code-agent: Open chat**. To run the agent from the repo instead, set `wildcatCodeAgent.command` in that window, for example `["uv", "run", "--project", "C:\\src\\wildcat-code-agent", "wildcat-code-agent"]`. Reload the window after a change.
 
@@ -657,3 +657,7 @@ The agent works in one folder, the **workspace**: the folder you start it from, 
 Windows path cases are covered by `tests/test_sandbox.py`: case and drive-letter case, `C:foo`, `\foo`, UNC, `\\?\` and `\\?\UNC\`, 8.3 short names, junctions (created with `mklink /J` in the test; skipped with a reason if that is not allowed), prefix tricks such as `work-evil` next to `work`, and symlinks (skipped here: Windows refused to create one without Developer Mode or admin).
 
 You still need to read each prompt. The sandbox limits where file tools go; it does not judge what a command or a file's content will do.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE). The VS Code extension carries the same license (`extensions/vscode/LICENSE` is a copy).

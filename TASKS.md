@@ -135,7 +135,18 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - `vsce package` produces a `.vsix`; uses `wildcat-code-agent` from PATH, with a setting to override the path. Install docs for each Windows account.
 - **Done when:** the `.vsix` installs with `code --install-extension` and works against the installed app.
 
-## Not scheduled (optional, from PLAN.md M5)
+## M5: license and short command
+
+### ✅ T23 License: `done`
+- Apache License 2.0 for the repository and the VS Code extension.
+- **Done when:** `LICENSE` is in the repo, the wheel declares it, and the `.vsix` carries it without a vsce warning.
+
+### T24 `wca` command alias: `todo`
+- `wca` is a second name for `wildcat-code-agent`: the same program and the same subcommands and flags. The long name stays the main one (exe names, installer, extension default, docs).
+- An entry point in `pyproject.toml`; a `wca.exe` in the frozen build and the installer, next to `wildcat-code-agent.exe`, so it is on PATH after an install. Help and error text name the command the user typed.
+- **Done when:** `uv run wca --help` works, and the built app and the installer both have `wca.exe` that runs the same program.
+
+## Not scheduled (optional)
 
 Inline completions (FIM), code signing, auto-update.
 
@@ -827,3 +838,8 @@ Findings from **verify** items and follow-ups go here, by task id.
 - **Fixed:** README's Releasing section had a vertical-tab byte in `extensions\vscode` (the `\v` was read as an escape); it now says `extensions/vscode`. No other control characters in README.md, TASKS.md or extensions/vscode/README.md.
 - **Reviewer confirmed:** the .vsix (27 files) holds every module `out/src` requires, every file the webview loads, and both icons; its `webview/` is byte-identical to `src/wildcat_code_agent/web`; no sources, tests, maps or local paths. The setup-node pin `49933ea` is the `v4` tag. Installed in an isolated profile.
 - **Follow-ups (nits, not done):** the packaged `out/src/*.js` keep `sourceMappingURL` comments for maps that are not shipped (harmless); a missing `cwd` also gives ENOENT, so the not-found message can blame the command when the workspace folder was deleted; `vsce package` warns about the missing LICENSE (add `--skip-license` if CI ever waits on it, or add a LICENSE once one is chosen).
+
+**T23**
+- **Decided (user, 2026-11-26):** Apache License 2.0. `LICENSE` is the text from apache.org (`LICENSE-2.0.txt`, sha256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, the published file). `pyproject.toml` has `license = "Apache-2.0"` and `license-files = ["LICENSE"]` (PEP 639). `extensions/vscode/package.json` has `"license": "Apache-2.0"`, and `extensions/vscode/LICENSE` is a copy (vsce reads it from the extension folder); `package.test.mjs` checks the copy matches the root file and that the .vsix carries it.
+- **Verified:** `uv build --wheel`: the wheel has `dist-info/licenses/LICENSE`, `License-Expression: Apache-2.0` and `License-File: LICENSE`. `npm test`: 86 passed. `npm run package`: 28 files, 95.94 KB, `LICENSE.txt` included (vsce's name for it), no license warning. `uv lock --check`: unchanged.
+- **Follow-ups:** the installer does not show or install the license (an Inno `LicenseFile` page, or copying `LICENSE` to the program folder); no per-file license headers and no NOTICE file (Apache-2.0 does not require them).
