@@ -5,6 +5,7 @@
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { runEditorTools } from "./editorTools";
+import { runAddSelection } from "./addSelection";
 
 const EXTENSION_ID = "local-agent.local-agent-vscode";
 const PANEL_TITLE = "local-agent";
@@ -51,4 +52,5 @@ export async function run(): Promise<void> {
   await waitFor(() => panelTabs().length === 0, "the second chat panel to close");
 
   await runEditorTools();
+  await runAddSelection();
 }

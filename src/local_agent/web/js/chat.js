@@ -1,3 +1,5 @@
+import { attachmentLabel } from "./attachments.js";
+
 // The screen: the conversation, tool-call cards, the approval dialog, the status line and the composer.
 //
 // Every piece of text from the agent or the tools goes in with textContent (or a text node), never innerHTML,
@@ -89,6 +91,11 @@ export class ChatView {
     this.status = doc.getElementById("status");
     this.workspace = doc.getElementById("workspace");
     this.prompt = doc.getElementById("prompt");
+    this.attachmentsBox = doc.getElementById("attachments");
+    this.mentionList = doc.getElementById("mentions");
+    this.mentionFiles = [];     // the @file suggestions shown, and the one highlighted
+    this.mentionIndex = 0;
+    this.onPick = null;         // set by main.js: called with the file the user picks from the list
     this.send = doc.getElementById("send");
     this.cancel = doc.getElementById("cancel");
     this.usage = doc.getElementById("usage");
@@ -108,6 +115,78 @@ export class ChatView {
       event.preventDefault(); // Esc refuses the call instead of closing the dialog silently
       this.finishApproval({ outcome: "cancelled" });
     });
+  }
+
+  // The attachment row: the open file as a toggle, then the chips (each with a remove button).
+  renderAttachments(list, handlers) {
+    this.attachmentsBox.replaceChildren();
+    const empty = !list.active && list.items.length === 0;
+    this.attachmentsBox.hidden = empty;
+    if (list.active) {
+      const label = el("label", "chip toggle");
+      const box = this.doc.createElement("input");
+      box.type = "checkbox";
+      box.checked = list.activeOn;
+      box.addEventListener("change", () => handlers.onToggle(box.checked));
+      label.append(box, el("span", "", `Open file: ${list.active.name}`));
+      this.attachmentsBox.append(label);
+    }
+    for (const item of list.items) {
+      const chip = el("span", "chip", attachmentLabel(item));
+      const remove = el("button", "chip-remove", "×");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${attachmentLabel(item)}`);
+      remove.addEventListener("click", () => handlers.onRemove(item.id));
+      chip.append(remove);
+      this.attachmentsBox.append(chip);
+    }
+  }
+
+  // The @file suggestions under the composer. The highlighted one is chosen with Enter or Tab.
+  showMentions(files) {
+    this.mentionFiles = files;
+    this.mentionIndex = 0;
+    this.mentionList.replaceChildren();
+    for (const [index, file] of files.entries()) {
+      const option = el("li", index === 0 ? "active" : "", file.name);
+      option.id = `mention-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", index === 0 ? "true" : "false");
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault(); // keep the focus in the prompt
+        if (this.onPick) {
+          this.onPick(file);
+        }
+      });
+      this.mentionList.append(option);
+    }
+    this.mentionList.hidden = files.length === 0;
+  }
+
+  mentionsOpen() {
+    return !this.mentionList.hidden;
+  }
+
+  hideMentions() {
+    this.mentionFiles = [];
+    this.mentionList.replaceChildren();
+    this.mentionList.hidden = true;
+  }
+
+  moveMention(step) {
+    if (this.mentionFiles.length === 0) {
+      return;
+    }
+    const count = this.mentionFiles.length;
+    this.mentionIndex = (this.mentionIndex + step + count) % count;
+    for (const [index, option] of [...this.mentionList.children].entries()) {
+      option.classList.toggle("active", index === this.mentionIndex);
+      option.setAttribute("aria-selected", index === this.mentionIndex ? "true" : "false");
+    }
+  }
+
+  chosenMention() {
+    return this.mentionFiles[this.mentionIndex] || null;
   }
 
   setStatus(text, state = "") {

@@ -29,11 +29,19 @@ export function connectHostLink(api, win = window) {
       onMessage: null,
       onClose: null,
       onError: null,
+      // The editor messages (T21): {type: "attach" | "active" | "files"}, passed on as received.
+      onHost: null,
       send(text) {
         if (closed) {
           throw new LinkError("The connection to local-agent is closed.");
         }
         api.postMessage({ type: "send", text });
+      },
+      // Asks the host for workspace files whose name matches `query`; the answer comes as a "files" message with `id`.
+      findFiles(id, query) {
+        if (!closed) {
+          api.postMessage({ type: "findFiles", id, query });
+        }
       },
     };
     const end = (reason) => {
@@ -63,6 +71,8 @@ export function connectHostLink(api, win = window) {
         link.onMessage(data.text);
       } else if (data.type === "closed") {
         end(typeof data.reason === "string" ? data.reason : "The connection was closed.");
+      } else if ((data.type === "attach" || data.type === "active" || data.type === "files") && link.onHost) {
+        link.onHost(data);
       } else if (data.type === "error" && !closed) {
         const text = typeof data.reason === "string" ? data.reason : "A message could not be sent to local-agent.";
         if (link.onError) {

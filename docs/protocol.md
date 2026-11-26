@@ -88,10 +88,10 @@ Requests must follow this order: `initialize` first, then `session/new`, then `s
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
 ```
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}},"authMethods":[],"agentInfo":{"name":"local-agent","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{}},"promptCapabilities":{"image":false,"audio":false,"embeddedContext":true}},"authMethods":[],"agentInfo":{"name":"local-agent","version":"0.1.0"}}}
 ```
 
-`protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text blocks only, so all prompt capabilities are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
+`protocolVersion` must be an integer (else `-32602`). The agent always answers `1`. Prompts take text, `resource_link` and embedded text `resource` blocks (see "Prompt content" below), so `embeddedContext` is `true`. `image` and `audio` are `false`. `authMethods` is empty: there is no login. `loadSession` and `sessionCapabilities.list` are advertised: the agent supports `session/load` and `session/list` (below).
 
 `clientCapabilities` is read (T20): with `fs.readTextFile`, `fs.writeTextFile` or `terminal` set to `true`, the agent sends the client methods in "Client methods" below for the file and command tools. Each one is separate. The agent does not advertise anything for them of its own. The CLI, the browser and the pywebview window declare none, so they keep the local tools.
 
@@ -227,6 +227,41 @@ The server streams `session/update` notifications while the turn runs (see below
 - Only one prompt runs per session. A second `session/prompt` to a session that is busy gets `-32600` at once; the running turn is not affected.
 - `prompt` must be a non-empty list of `text` blocks. Other block types (images, resource links, embedded resources) get `-32602`, since the agent does not declare those capabilities. An empty or all-whitespace text is `-32602` too. Text that is not valid Unicode, such as a lone surrogate (JSON `"\ud800"`), is `-32602`; the message is not added to history.
 
+### Prompt content (T21)
+
+`session/prompt`'s `prompt` is a list of ACP v1 content blocks. The shapes were checked against the v1 schema (agentclientprotocol.com/protocol/content, fetched 2026-11-26): `text` (`text`); `resource_link` (`uri`, `name`, optional `mimeType`, `title`, `description`, `size`); `resource` (`resource` with `uri`, `text`, optional `mimeType` for text, or `uri`, `blob` for binary). `embeddedContext` in `promptCapabilities` says the agent takes embedded `resource` blocks; the agent advertises it.
+
+| Block | What it is | Handling |
+|---|---|---|
+| `text` | the typed message | the texts are joined with newlines and stripped, as before |
+| `resource_link` | a file, by `file:` URI | read by the agent (see below) |
+| `resource` with `text` | the editor's own text, such as a selection | included as sent; a `#L<start>-L<end>` fragment on the URI gives its lines (1-based, inclusive) |
+| `resource` with `blob`, `image`, `audio` | binary | `-32602` |
+
+**Where it goes.** The model message is the typed text, then `=== attached context (local-agent) ===`, then a line that says the text is data and not instructions, then one section per attachment:
+
+```
+--- file: src/app.py (lines 2-3, the selected text) ---
+...text...
+--- end of src/app.py ---
+--- not included: notes/private.txt: it is outside the workspace; ask for it with read_file if it is needed ---
+--- diagnostics for file:///w/src/app.py: 1 ---
+line 4, column 1: error (pyright): undefined name 'x'
+--- end of diagnostics ---
+```
+
+A prompt with only attachments and no typed text is valid. A prompt with no attachments is the text alone, as before.
+
+**`resource_link` rules (T05 sandbox).** Only `file:` URIs with an empty or `localhost` host are read. The path is resolved as the sandbox resolves a tool path. A path outside the workspace, or one the sandbox refuses, is **not included** and is not asked about: the note tells the model to ask for it with `read_file` if needed, which asks the user as usual. A file that is missing, is a folder, is binary or is not UTF-8 gets a note. A file over 4 MiB is not read. When the client advertised `fs.readTextFile` (the VS Code extension does), the text is read through the editor, so unsaved changes are included; otherwise it is read from disk.
+
+**`resource` (embedded) rules.** The text is the user's own buffer, so it is included as sent, even if its file is outside the workspace (then its label is the absolute path).
+
+**Limits.** A section holds at most 40,000 characters. The whole context holds at most `min(120,000, num_ctx * 3 / 2)` characters (half the model's window at 3 characters per token). A section that is cut says `[truncated: the first N of M characters are included]`. An item that does not fit gets a `not included` note. The numbers are constants in `src/local_agent/attachments.py`.
+
+**Diagnostics.** When the client declares `clientCapabilities._meta["local-agent"].diagnostics` as `true`, the agent asks the client for the diagnostics of the attached files (`_local-agent/diagnostics`, below) and adds a diagnostics section after each file. Without the declaration the agent does not ask.
+
+**History.** The saved history keeps the whole message, context included, as tool results already are. A session replay shows the typed text followed by `[with attached context]`, not the context itself.
+
 ### `session/cancel` (client notification)
 
 ```json
@@ -345,6 +380,10 @@ The names and shapes are ACP v1's, checked against the v1 release `schema.json` 
 - Approval and the sandbox are unchanged: the agent asks `session/request_permission` first where a tool asks, a path outside the workspace is asked for, and nothing is sent to the client for a call that is refused.
 - The approval diff for `write_file` and `edit_file` is computed from the client's text when the client can read, so the user sees the change against what is in the editor.
 
+### `_local-agent/diagnostics` (agent request to the client, T21)
+
+Sent during a `session/prompt`, only when the client declared the diagnostics capability (see "Prompt content"). Params: `{sessionId, uris: [string]}`, the `file:` URIs of the attached files without their line fragments. The client answers `{files: [{uri, items: [...]}]}`, one entry per requested URI, each item `{severity, startLine, startColumn, message}` with `severity` one of `error`, `warning`, `information`, `hint`, lines and columns 1-based, and optional `endLine`, `endColumn`, `source`. Malformed items are dropped; an error answer or no answer just leaves the diagnostics out of the context. The VS Code host answers from `vscode.languages.getDiagnostics`.
+
 ## Errors
 
 Errors are JSON-RPC error responses with `code`, `message` and, where useful, `data`.
@@ -381,7 +420,7 @@ Checked for T17 against the v1 release `schema.json` (agentclientprotocol.com, d
 - **Client methods (T20):** the agent sends `terminal/create` with `args: []` for a command line (it runs through the client's shell, not as a program). ACP says `command` is the program; a client that starts it directly would not run `cmd` lines. The VS Code host runs them through the shell. `fs/read_text_file` `line` and `limit` are not sent by the agent yet.
 - **Session configuration:** only the `model` option, through `session/set_config_option` (ACP v1 shape: `configOptions` with `category: "model"`, `type: "select"`). Checked against the v1 schema (see below).
 - **Extensions:** `_local-agent/models`, `_local-agent/settings/get` and `_local-agent/settings/set` (see above).
-- **Prompts:** text blocks only.
+- **Prompts:** text, `resource_link` and embedded text `resource` blocks (T21). Image, audio and binary (`blob`) blocks are refused with `-32602`.
 - **`session/new`:** `mcpServers` is accepted and ignored (warning on stderr). `systemPrompt` and `additionalDirectories` are ignored. The answer carries `configOptions` and `_meta`.
 - **Tool calls:** the `title` is generated from the tool name and arguments, not the approval question (the permission request carries that). `status` is `pending` before approval.
 - **Token counts:** ACP has no place for them in the prompt result, so `promptTokens` and `completionTokens` are under `_meta.usage`. The `usage_update` `used` value is the prompt size of the last request, and `size` is `num_ctx`.

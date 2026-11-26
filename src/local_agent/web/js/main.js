@@ -8,6 +8,7 @@
 
 import { AcpClient } from "./acp.js";
 import { ChatView } from "./chat.js";
+import { AttachmentList, MENTION_DEBOUNCE_MS, mentionAt, promptBlocks, removeMention } from "./attachments.js";
 import { fillSettings, readSettings, renderModelOption, renderSessionList } from "./panels.js";
 import { connectHostLink, connectWebSocket } from "./transport.js";
 
@@ -59,6 +60,11 @@ class App {
     this.currentModel = "";
     this.busy = false;
     this.dead = false;
+    this.link = null;          // the host link (VS Code), or null in the browser: no editor context there
+    this.attachments = new AttachmentList();
+    this.mention = null;       // the @mention being typed, or null
+    this.mentionTimer = null;
+    this.mentionSearch = 0;    // the id of the last file search asked for
     this.nextCursor = null;
     this.items = [];
     this.canList = true;
@@ -91,6 +97,8 @@ class App {
     const { link, cwd, clientCapabilities } = await open();
     // A host-side send error (the link stays open) is shown in the chat, the same way a failed turn is.
     link.onError = (text) => this.view.addError(text);
+    this.link = link;
+    link.onHost = (message) => this.onHostMessage(message);
     this.client = new AcpClient(link);
     this.client.onUpdate = (update) => this.view.update(update);
     this.client.onPermission = (params) => this.view.askPermission(params);
@@ -111,6 +119,68 @@ class App {
     this.cwd = cwd;
     this.view.workspace.textContent = cwd;
     return this.client;
+  }
+
+  // Editor messages (T21): a selection to attach, the active file, and the answer to an @file search.
+  onHostMessage(message) {
+    if (message.type === "attach") {
+      this.attachments.add(message.attachment);
+      this.renderAttachments();
+      this.view.prompt.focus();
+    } else if (message.type === "active") {
+      this.attachments.setActive(message.file);
+      this.renderAttachments();
+    } else if (message.type === "files" && message.id === this.mentionSearch && this.mention) {
+      this.view.showMentions(message.files);
+    }
+  }
+
+  renderAttachments() {
+    this.view.renderAttachments(this.attachments, {
+      onToggle: (on) => {
+        this.attachments.setActiveOn(on);
+      },
+      onRemove: (id) => {
+        this.attachments.remove(id);
+        this.renderAttachments();
+      },
+    });
+  }
+
+  // The @file mention under the caret: after a short pause the host is asked for files matching it.
+  updateMention() {
+    if (!this.link || typeof this.link.findFiles !== "function") {
+      return; // the browser has no editor to search
+    }
+    const view = this.view;
+    this.mention = mentionAt(view.prompt.value, view.prompt.selectionStart);
+    clearTimeout(this.mentionTimer);
+    if (!this.mention) {
+      view.hideMentions();
+      return;
+    }
+    const query = this.mention.query;
+    this.mentionTimer = setTimeout(() => {
+      this.mentionSearch += 1;
+      this.link.findFiles(this.mentionSearch, query);
+    }, MENTION_DEBOUNCE_MS);
+  }
+
+  // The file picked from the @ list replaces the mention with an attachment.
+  pickMention(file) {
+    const view = this.view;
+    const mention = mentionAt(view.prompt.value, view.prompt.selectionStart);
+    if (!mention) {
+      return;
+    }
+    const next = removeMention(view.prompt.value, mention);
+    view.prompt.value = next.text;
+    view.prompt.setSelectionRange(next.caret, next.caret);
+    this.attachments.add(file);
+    this.mention = null;
+    view.hideMentions();
+    this.renderAttachments();
+    view.prompt.focus();
   }
 
   // Apply a session/new or session/load answer: the model picker and the warnings it carries.
@@ -252,19 +322,26 @@ class App {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const text = view.prompt.value.trim();
-      if (!text || view.send.disabled) {
+      if ((!text && this.attachments.isEmpty()) || view.send.disabled) {
         return;
       }
+      const blocks = promptBlocks(text, this.attachments);
+      const attached = this.attachments.labels();
       view.prompt.value = "";
+      view.hideMentions();
+      this.mention = null;
       view.showNotice("");
-      view.addUser(text);
+      view.addUser(attached.length ? `${text}
+[attached: ${attached.join(", ")}]`.trim() : text);
+      this.attachments.clearChips();
+      this.renderAttachments();
       this.busy = true;
       view.setBusy(true);
       this.lock(true);
       try {
         const result = await this.client.request("session/prompt", {
           sessionId: this.sessionId,
-          prompt: [{ type: "text", text }],
+          prompt: blocks,
         });
         view.turnEnded(result);
       } catch (error) {
@@ -278,7 +355,29 @@ class App {
         view.prompt.focus();
       }
     });
+    view.onPick = (file) => this.pickMention(file);
+    view.prompt.addEventListener("input", () => this.updateMention());
     view.prompt.addEventListener("keydown", (event) => {
+      if (view.mentionsOpen()) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          view.moveMention(event.key === "ArrowDown" ? 1 : -1);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          view.hideMentions();
+          return;
+        }
+        if ((event.key === "Enter" && !event.shiftKey && !event.isComposing) || event.key === "Tab") {
+          const chosen = view.chosenMention();
+          if (chosen) {
+            event.preventDefault();
+            this.pickMention(chosen);
+            return;
+          }
+        }
+      }
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         form.requestSubmit();
