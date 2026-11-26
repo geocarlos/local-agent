@@ -12,6 +12,8 @@ at the prompt exits.
 """
 
 import argparse
+import os
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -141,14 +143,31 @@ subcommands (put the subcommand first, before any flag):
   serve --stdio    the Agent Client Protocol server over stdin and stdout (see docs/protocol.md)
   gui              a placeholder until a later version
 
-example: wildcat-code-agent serve --stdio --cwd C:\\work\\my-project
+example: {prog} serve --stdio --cwd C:\\work\\my-project
 """
+
+LONG_NAME = "wildcat-code-agent"
+SHORT_NAME = "wca"  # the same program under a short name (T24): the wca entry point and wca.exe
+
+
+def command_name() -> str:
+    """The command the user typed: `wca` or `wildcat-code-agent`, the basename of sys.argv[0] without `.exe`.
+
+    Anything else (for example `python -m`, where sys.argv[0] ends in `__main__.py`) gets the long name.
+    """
+    stem = os.path.basename(sys.argv[0]) if sys.argv else ""
+    if stem.lower().endswith(".exe"):
+        stem = stem[:-4]
+    stem = stem.lower()
+    return stem if stem in (SHORT_NAME, LONG_NAME) else LONG_NAME
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The parser for `wildcat-code-agent` and `wildcat-code-agent chat` (the REPL)."""
-    parser = argparse.ArgumentParser(prog="wildcat-code-agent", description="Local coding assistant on Ollama.",
-                                     epilog=SUBCOMMANDS_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    """The parser for `wildcat-code-agent` (or `wca`) and `... chat` (the REPL)."""
+    prog = command_name()
+    parser = argparse.ArgumentParser(prog=prog, description="Local coding assistant on Ollama.",
+                                     epilog=SUBCOMMANDS_HELP.format(prog=prog),
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     add_settings_flags(parser)
     return parser
 

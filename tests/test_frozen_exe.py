@@ -74,3 +74,13 @@ def test_serve_stdio_initialize_round_trip_writes_only_json_to_stdout(tmp_path):
         rest.append(raw)
     for raw in rest:
         json.loads(raw.decode("utf-8"))
+
+
+def test_wca_help_runs_under_the_short_name(tmp_path):
+    # T24: wca.exe is the same console program under a short name, in the same folder.
+    wca = EXE.parent / "wca.exe"
+    assert wca.is_file(), wca
+    result = subprocess.run([str(wca), "--help"], cwd=tmp_path, capture_output=True, text=True,
+                            encoding="utf-8", timeout=TIMEOUT_S)
+    assert result.returncode == 0, result.stderr
+    assert "usage: wca " in result.stdout

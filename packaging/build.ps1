@@ -1,4 +1,4 @@
-# Builds wildcat-code-agent.exe (PyInstaller, --onedir) into dist\wildcat-code-agent\.
+# Builds wildcat-code-agent.exe, wca.exe and wildcat-code-agent-gui.exe (PyInstaller, --onedir) into dist\wildcat-code-agent\.
 # Run it from any folder; it works from the repo root.
 #
 # Requires uv on PATH. The build tool is the `pyinstaller` dev dependency, so nothing else is installed.
@@ -24,6 +24,9 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 $Exe = Join-Path $Root "dist\wildcat-code-agent\wildcat-code-agent.exe"
 if (-not (Test-Path $Exe)) { throw "Expected $Exe after the build" }
+# wca.exe (T24) is the short name for the same console program; the installer puts the folder on PATH.
+$Wca = Join-Path $Root "dist\wildcat-code-agent\wca.exe"
+if (-not (Test-Path $Wca)) { throw "Expected $Wca after the build" }
 
 $Bytes = (Get-ChildItem (Join-Path $Root "dist\wildcat-code-agent") -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("Built {0} ({1:N1} MB in dist\wildcat-code-agent)" -f $Exe, ($Bytes / 1MB))

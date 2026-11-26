@@ -23,7 +23,7 @@ def _port(text: str) -> int:
 
 def _serve_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="wildcat-code-agent serve",
+        prog=f"{cli.command_name()} serve",
         description="Run the agent as an Agent Client Protocol (ACP) server. Choose one transport: "
                     "--stdio (JSON lines on stdin and stdout) or --web (WebSocket on 127.0.0.1).",
     )
@@ -59,8 +59,9 @@ def main(argv: list[str] | None = None) -> None:
             # A subcommand word after the flags (`wildcat-code-agent --cwd X serve --stdio`) is the common mistake.
             word = next((token for token in extra if token in SUBCOMMANDS), None)
             if word is not None:
-                parser.error(f"the subcommand must come first: write `wildcat-code-agent {word} ...` with its flags after it, "
-                             f"for example `wildcat-code-agent {word} --stdio --cwd X`")
+                prog = cli.command_name()
+                parser.error(f"the subcommand must come first: write `{prog} {word} ...` with its flags after it, "
+                             f"for example `{prog} {word} --stdio --cwd X`")
             parser.error("unrecognized arguments: " + " ".join(extra))
 
     try:
