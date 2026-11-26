@@ -2,13 +2,29 @@
 // selection as attachments. The pure parts (glob, attachments, reply shapes) are in attachments.ts.
 
 import * as vscode from "vscode";
-import { DiagnosticInput, FileAttachment, fileAttachment, MENTION_EXCLUDE, MENTION_LIMIT, mentionGlob, selectionAttachment, SelectionAttachment } from "./attachments";
+import {
+  DiagnosticInput,
+  FileAttachment,
+  fileAttachment,
+  mentionExclude,
+  mentionGlob,
+  MENTION_SEARCH_LIMIT,
+  rankMentions,
+  selectionAttachment,
+  SelectionAttachment,
+} from "./attachments";
 
-// Workspace files whose name contains the query, at most MENTION_LIMIT. A failed search gives no files.
+// Workspace files whose name contains the query, best matches first, at most MENTION_LIMIT. The exclude merges the
+// user's enabled files.exclude and search.exclude with node_modules and .git. A failed search gives no files.
 export async function findWorkspaceFiles(query: string): Promise<FileAttachment[]> {
   try {
-    const uris = await vscode.workspace.findFiles(mentionGlob(query), MENTION_EXCLUDE, MENTION_LIMIT);
-    return uris.map((uri) => fileAttachment(uri.toString(), vscode.workspace.asRelativePath(uri, false)));
+    const exclude = mentionExclude(
+      vscode.workspace.getConfiguration("files").get<Record<string, unknown>>("exclude"),
+      vscode.workspace.getConfiguration("search").get<Record<string, unknown>>("exclude"),
+    );
+    const uris = await vscode.workspace.findFiles(mentionGlob(query), exclude, MENTION_SEARCH_LIMIT);
+    const files = uris.map((uri) => fileAttachment(uri.toString(), vscode.workspace.asRelativePath(uri, false)));
+    return rankMentions(query, files);
   } catch {
     return [];
   }

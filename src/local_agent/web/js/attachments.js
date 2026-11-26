@@ -107,6 +107,12 @@ export class AttachmentList {
     return out;
   }
 
+  // Whether the user chose an attachment on purpose (a selection or an @file pick). The open-file toggle does not count:
+  // an empty composer with only the toggle on sends nothing.
+  hasChips() {
+    return this.items.length > 0;
+  }
+
   isEmpty() {
     return this.items.length === 0 && !(this.active && this.activeOn);
   }

@@ -10,7 +10,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { DIAGNOSTICS_METHOD, answerClientRequest, clientRequestOf, ClientRequest } from "./clientRouter";
 import { CLIENT_CAPABILITIES, parseWebviewMessage, HostToWebview } from "./messages";
-import { diagnosticsReply, SelectionAttachment } from "./attachments";
+import { activeFileOf, diagnosticsReply, SelectionAttachment } from "./attachments";
 import {
   activeFileAttachment,
   diagnosticsOf,
@@ -54,7 +54,14 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("localAgent.openChat", () => openChat(context, output)),
     vscode.commands.registerCommand("localAgent.addSelection", () => addSelection(context, output)),
-    vscode.window.onDidChangeActiveTextEditor(() => sendToChat({ type: "active", file: activeFileAttachment() })),
+    // Only a real file editor changes the open file. Focusing the chat in the same group makes the editor undefined;
+    // that keeps the last file editor (see activeFileOf).
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      const file = activeFileOf(editor, (uri) => vscode.workspace.asRelativePath(uri, false));
+      if (file) {
+        sendToChat({ type: "active", file });
+      }
+    }),
     { dispose: () => stopAgent() },
   );
 }
@@ -95,7 +102,6 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
     localResourceRoots: [bundle],
   });
   panel = current;
-  current.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "tab-icon.png");
   current.webview.html = pageHtml(context, current.webview, bundle);
   const tools = new EditorTools();
   editorTools = tools;

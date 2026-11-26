@@ -322,7 +322,8 @@ class App {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const text = view.prompt.value.trim();
-      if ((!text && this.attachments.isEmpty()) || view.send.disabled) {
+      // Typed text, or a chosen attachment (a selection or an @file pick). The open-file toggle alone does not send.
+      if ((!text && !this.attachments.hasChips()) || view.send.disabled) {
         return;
       }
       const blocks = promptBlocks(text, this.attachments);

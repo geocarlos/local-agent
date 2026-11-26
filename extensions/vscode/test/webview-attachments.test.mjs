@@ -87,6 +87,17 @@ test("clearing the chips keeps the open-file toggle as the user set it", () => {
   assert.equal(list.isEmpty(), true);
 });
 
+test("the open-file toggle alone is not a chosen attachment: an empty composer does not send a context-only prompt", () => {
+  const list = new AttachmentList();
+  list.setActive({ kind: "file", uri: "file:///w/open.ts", name: "open.ts" });
+  assert.equal(list.activeOn, true);
+  assert.equal(list.hasChips(), false, "the toggle on its own sends nothing");
+  list.add({ kind: "file", uri: "file:///w/picked.ts", name: "picked.ts" });
+  assert.equal(list.hasChips(), true, "an @file pick is a chosen attachment");
+  list.clearChips();
+  assert.equal(list.hasChips(), false);
+});
+
 test("a prompt is the typed text first, then the attachments; with no text it is only the attachments", () => {
   const list = new AttachmentList();
   list.add(selection);

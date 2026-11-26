@@ -836,13 +836,20 @@ class StdioServer:
         response: dict
         warnings: list[str] = []
         try:
-            # The attached context (T21) is part of the user message, so the model and the saved history see it.
+            # The attached context (T21) is in the user message for this turn only. Later turns and the saved
+            # history keep the typed text and a marker listing the attachments (see attachments.history_text).
             content = attachments.build_message(prompt, workspace=session.settings.workspace,
                                                 num_ctx=session.settings.num_ctx, client=client_tools)
             session.messages.append({"role": "user", "content": content})
-            loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
-                          approver=approver, cancel=session.cancel, session=session.approvals,
-                          client_tools=client_tools)
+            index = len(session.messages) - 1
+            try:
+                loop.run_turn(session.messages, client=self._client, settings=session.settings, emit=events,
+                              approver=approver, cancel=session.cancel, session=session.approvals,
+                              client_tools=client_tools)
+            finally:
+                if prompt.attachments:
+                    session.messages[index]["content"] = attachments.history_text(
+                        prompt, workspace=session.settings.workspace)
             warnings = self._save_session(session)  # before the answer, so a session/list that follows shows it
             outcome = events.outcome
             if isinstance(outcome, TurnDone):
