@@ -1,6 +1,8 @@
 // Runs real processes: the runner is the part of terminal/* that has no VS Code in it.
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 import { CommandRun } from "../src/commandRunner";
 
@@ -74,4 +76,48 @@ test("a second start is refused", () => {
   const run = runProgram("setTimeout(() => {}, 100);");
   assert.throws(() => run.start(), /already running/);
   run.kill();
+});
+
+// A shell command that starts a node process, which starts a grandchild node process that prints its pid and sleeps.
+// The grandchild inherits the pipes, as a real program under cmd.exe does. Kill must end all three.
+test("kill ends the whole process tree of a shell command, and waitForExit resolves", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t20-tree-"));
+  const grandchild = path.join(dir, "grandchild.js");
+  const middle = path.join(dir, "middle.js");
+  fs.writeFileSync(grandchild, 'console.log("PID " + process.pid); setTimeout(() => {}, 60000);', "utf8");
+  fs.writeFileSync(
+    middle,
+    `require("node:child_process").spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: "inherit" });` +
+      " setTimeout(() => {}, 60000);",
+    "utf8",
+  );
+  const run = new CommandRun(`${NODE} ${JSON.stringify(middle)}`, [], { cwd: os.tmpdir(), outputLimit: 10_000 });
+  run.start();
+  let grandchildPid: number | undefined;
+  try {
+    const deadline = Date.now() + 15_000;
+    while (grandchildPid === undefined && Date.now() < deadline) {
+      const match = /PID (\d+)/.exec(run.output);
+      grandchildPid = match ? Number(match[1]) : undefined;
+      if (grandchildPid === undefined) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    assert.ok(grandchildPid, `the grandchild started and printed its pid (output: ${run.output})`);
+    run.kill();
+    const started = Date.now();
+    await run.waitForExit();
+    assert.ok(Date.now() - started < 5_000, "waitForExit resolved within a few seconds of the kill");
+    assert.throws(() => process.kill(grandchildPid as number, 0), "the grandchild is gone");
+  } finally {
+    run.kill();
+    if (grandchildPid !== undefined) {
+      try {
+        process.kill(grandchildPid, "SIGKILL"); // only the pid this test read from its own output
+      } catch {
+        // already gone
+      }
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

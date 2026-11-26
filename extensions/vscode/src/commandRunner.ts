@@ -7,6 +7,10 @@
 
 import { ChildProcess, spawn } from "node:child_process";
 
+// After the process has exited, its output may still arrive (a grandchild that holds the pipes, or the last chunk).
+// waitForExit waits this long for the pipes to close, then resolves with the exit anyway.
+export const EXIT_GRACE_MS = 500;
+
 export interface CommandExit {
   exitCode: number | null;
   signal: string | null;
@@ -24,6 +28,8 @@ export class CommandRun {
   private waiters: Array<(exit: CommandExit) => void> = [];
   private text = "";
   private dropped = false;
+  private killing = false;
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly command: string,
@@ -54,7 +60,18 @@ export class CommandRun {
       this.append(`Cannot start the command: ${error.message}\r\n`);
       this.finish({ exitCode: null, signal: null });
     });
-    child.on("close", (code, signal) => this.finish({ exitCode: code, signal }));
+    // `exit` comes when the process itself ends; `close` only when its pipes are closed too, which a grandchild
+    // that kept them open can prevent. So the exit resolves after a short grace period, and close ends it at once.
+    child.on("exit", (code, signal) => {
+      this.graceTimer ??= setTimeout(() => this.finish({ exitCode: code, signal }), EXIT_GRACE_MS);
+    });
+    child.on("close", (code, signal) => {
+      if (this.graceTimer) {
+        clearTimeout(this.graceTimer);
+        this.graceTimer = null;
+      }
+      this.finish({ exitCode: code, signal });
+    });
   }
 
   get output(): string {
@@ -78,26 +95,43 @@ export class CommandRun {
   }
 
   // Ends the command and every process it started. Returns at once; waitForExit() resolves when it has ended.
+  // On Windows, taskkill /T ends the tree (cmd.exe and the programs it started); the direct child is killed only if
+  // taskkill fails. On POSIX the whole process group is killed.
   kill(): void {
     const child = this.child;
-    if (!child || this.exit) {
+    if (!child || this.exit || this.killing) {
       return;
     }
+    this.killing = true;
     if (process.platform === "win32") {
-      if (child.pid !== undefined) {
-        const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
-          windowsHide: true,
-          stdio: "ignore",
-        });
-        killer.on("error", () => undefined); // no taskkill: the direct child is killed below
+      if (child.pid === undefined) {
+        child.kill();
+        return;
       }
-      child.kill();
+      const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      killer.on("error", () => this.killDirect(child));
+      killer.on("exit", (code) => {
+        if (code !== 0) {
+          this.killDirect(child); // taskkill failed (no tree was ended): at least the direct child goes
+        }
+      });
       return;
     }
     try {
       process.kill(-(child.pid ?? 0), "SIGKILL");
     } catch {
+      this.killDirect(child);
+    }
+  }
+
+  private killDirect(child: ChildProcess): void {
+    try {
       child.kill("SIGKILL");
+    } catch {
+      // already gone
     }
   }
 

@@ -9,6 +9,33 @@ import { EditorTools } from "../../src/editorTools";
 
 const SESSION = "e2e-session";
 
+// The terminals the host opened for the agent's commands (named "local-agent", see editorTools.ts).
+function agentTerminals(): vscode.Terminal[] {
+  return vscode.window.terminals.filter((terminal) => terminal.name === "local-agent");
+}
+
+async function waitFor(check: () => boolean, what: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+async function withTimeout<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function showFile(file: string): Promise<vscode.TextDocument> {
   const document = await vscode.workspace.openTextDocument(file);
   await vscode.window.showTextDocument(document, { preview: false });
@@ -94,6 +121,33 @@ export async function runEditorTools(): Promise<void> {
     assert.match(output.output, /from the terminal/);
     assert.equal(output.exitStatus?.exitCode, 0);
     assert.equal(await tools.handle("terminal/release", { sessionId: SESSION, terminalId }), null);
+    // The released command's terminal stays open, with its output, until the next command starts (step 7 starts one).
+    assert.ok(agentTerminals().length >= 1, "the released terminal is still open");
+
+    // 7. A running command is killed: kill ends it, and waitForExit resolves, not after the command's own 60 s. Its
+    //    terminal stays open after release; the next command closes the previous terminal.
+    const long = (await tools.handle("terminal/create", {
+      sessionId: SESSION,
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 60000);"],
+      cwd: folder,
+    })) as { terminalId: string };
+    await tools.handle("terminal/kill", { sessionId: SESSION, terminalId: long.terminalId });
+    const killed = (await withTimeout(
+      tools.handle("terminal/wait_for_exit", { sessionId: SESSION, terminalId: long.terminalId }),
+      15_000,
+      "the killed command to end",
+    )) as { exitCode: number | null; signal: string | null };
+    assert.notDeepEqual(killed, { exitCode: 0, signal: null }, "the command was ended, not finished");
+    await tools.handle("terminal/release", { sessionId: SESSION, terminalId: long.terminalId });
+    const next = (await tools.handle("terminal/create", {
+      sessionId: SESSION,
+      command: process.execPath,
+      args: ["-e", "console.log('second')"],
+      cwd: folder,
+    })) as { terminalId: string };
+    await tools.handle("terminal/release", { sessionId: SESSION, terminalId: next.terminalId });
+    await waitFor(() => agentTerminals().length === 1, "the previous terminal to close");
   } finally {
     tools.dispose();
   }

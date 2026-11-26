@@ -1,7 +1,8 @@
 // The host's answers to the agent's fs/* and terminal/* requests (T20), with VS Code. Files: the open document is the
 // truth (unsaved text included); a write is a WorkspaceEdit, so it is on the editor's undo stack. Commands: each runs
 // in a VS Code terminal (a pseudoterminal that shows the output) and its output is kept for terminal/output.
-// The parameter checks and the reply shape are in clientRouter.ts; the slicing is in lineSlice.ts.
+// The parameter checks and the reply shape are in clientRouter.ts; the slicing is in lineSlice.ts. The host trusts the
+// core's sandbox and approval for the paths (docs/protocol.md): it checks only their form and that a cwd exists.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -24,15 +25,22 @@ import { sliceLines } from "./lineSlice";
 // Characters of output kept per command. The start is dropped beyond this, and terminal/output says so.
 export const OUTPUT_LIMIT = 1_000_000;
 
+// One command the agent started. Its terminal stays open after the agent releases the command (so the user can read
+// the output and the `[exit code N]` line). The terminal closes when the next command starts, when the user closes
+// it, or when the panel closes. See docs/protocol.md.
 interface TerminalEntry {
+  id: string;
   run: CommandRun;
-  terminal: vscode.Terminal;
   writer: vscode.EventEmitter<string>;
-  closed: boolean;
+  terminal?: vscode.Terminal;
+  ended: boolean; // the pseudoterminal is closed (by the user, or by the host)
 }
 
 export class EditorTools {
+  // The commands the agent may still use (until terminal/release).
   private readonly terminals = new Map<string, TerminalEntry>();
+  // The terminals open in the editor, released ones included.
+  private readonly shown = new Set<TerminalEntry>();
   private nextTerminal = 1;
   private disposed = false;
 
@@ -61,11 +69,21 @@ export class EditorTools {
     }
   }
 
-  // Ends every command and closes its terminal (the panel closed, or the extension stopped).
-  dispose(): void {
-    this.disposed = true;
+  // Releases every command the agent may still use (the agent stopped, or the panel closed): a running one is killed,
+  // and its terminal stays open with its exit line. The terminals themselves are closed by dispose() or by the next
+  // command.
+  releaseAll(): void {
     for (const id of [...this.terminals.keys()]) {
       this.releaseEntry(id);
+    }
+  }
+
+  // The panel closed or the extension stopped: release everything and close every terminal the commands opened.
+  dispose(): void {
+    this.disposed = true;
+    this.releaseAll();
+    for (const entry of [...this.shown]) {
+      entry.terminal?.dispose(); // its close callback ends the command (if still running) and forgets it
     }
   }
 
@@ -119,32 +137,36 @@ export class EditorTools {
       throw new ClientMethodError(INVALID_PARAMS, "Invalid params: command is empty.");
     }
     const args = p.args === undefined || p.args === null ? [] : stringArray(p.args, "args");
-    const cwd = p.cwd === undefined || p.cwd === null ? os.homedir() : absolutePathParam(p, "cwd");
+    const cwd = p.cwd === undefined || p.cwd === null ? os.homedir() : existingDirectoryParam(p, "cwd");
     const byteLimit = optionalIntParam(p, "outputByteLimit", 1);
+    const id = `t${this.nextTerminal++}`;
     const writer = new vscode.EventEmitter<string>();
     const run = new CommandRun(command, args, {
       cwd,
       outputLimit: Math.min(byteLimit ?? OUTPUT_LIMIT, OUTPUT_LIMIT),
       onData: (text) => writer.fire(toTerminalLines(text)),
     });
+    const entry: TerminalEntry = { id, run, writer, ended: false };
+    const pty: vscode.Pseudoterminal = {
+      onDidWrite: writer.event,
+      open: () => writer.fire(`$ ${[command, ...args].join(" ")}\r\n`),
+      close: () => this.endEntry(entry), // the terminal was closed: its command is ended
+    };
     try {
       run.start();
     } catch (error) {
       writer.dispose();
       throw new ClientMethodError(INTERNAL_ERROR, `Cannot run the command: ${errorText(error)}`);
     }
-    const pty: vscode.Pseudoterminal = {
-      onDidWrite: writer.event,
-      open: () => writer.fire(`$ ${[command, ...args].join(" ")}\r\n`),
-      close: () => run.kill(),
-    };
+    // One agent terminal at a time: the previous command's terminal is no longer used by the agent, so it is closed.
+    this.closeReleased();
     const terminal = vscode.window.createTerminal({ name: "local-agent", pty });
+    entry.terminal = terminal;
     terminal.show(true); // shown, without taking the focus from the chat
-    const id = `t${this.nextTerminal++}`;
-    const entry: TerminalEntry = { run, terminal, writer, closed: false };
     this.terminals.set(id, entry);
+    this.shown.add(entry);
     void run.waitForExit().then((exit) => {
-      if (!entry.closed) {
+      if (!entry.ended) {
         writer.fire(`\r\n[${describeExit(exit)}]\r\n`);
       }
     });
@@ -166,7 +188,8 @@ export class EditorTools {
     return null;
   }
 
-  // Releasing an unknown terminal is not an error: the agent may release twice.
+  // Releasing an unknown terminal is not an error: the agent may release twice. The command is killed if it still
+  // runs; its terminal stays open with the output and the exit line, until the next command or the user closes it.
   private release(params: unknown): null {
     const id = stringParam(recordParams(params), "terminalId");
     this.releaseEntry(id);
@@ -188,10 +211,28 @@ export class EditorTools {
       return;
     }
     this.terminals.delete(id);
-    entry.closed = true;
+    entry.run.kill(); // a no-op once the command has ended
+  }
+
+  // The terminal was closed (by the user, or by dispose): the command is ended and nothing is kept for it.
+  private endEntry(entry: TerminalEntry): void {
+    if (entry.ended) {
+      return;
+    }
+    entry.ended = true;
+    this.terminals.delete(entry.id);
+    this.shown.delete(entry);
     entry.run.kill();
     entry.writer.dispose();
-    entry.terminal.dispose();
+  }
+
+  // Closes the terminals of released commands. A command the agent still uses keeps its terminal.
+  private closeReleased(): void {
+    for (const entry of [...this.shown]) {
+      if (!this.terminals.has(entry.id)) {
+        entry.terminal?.dispose(); // its close callback (endEntry) does the rest
+      }
+    }
   }
 }
 
@@ -261,6 +302,21 @@ function describeExit(exit: CommandExit): string {
     return `exit code ${exit.exitCode}`;
   }
   return exit.signal ? `signal ${exit.signal}` : "no exit code";
+}
+
+// A string param that must be an absolute path to an existing directory (the command's cwd).
+function existingDirectoryParam(p: Record<string, unknown>, name: string): string {
+  const dir = absolutePathParam(p, name);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(dir);
+  } catch {
+    throw new ClientMethodError(RESOURCE_NOT_FOUND, `no such directory: ${dir}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new ClientMethodError(INVALID_PARAMS, `Invalid params: ${name} is not a directory: ${dir}`);
+  }
+  return dir;
 }
 
 function stringArray(value: unknown, name: string): string[] {

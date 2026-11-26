@@ -185,6 +185,7 @@ class _Pending:
     event: threading.Event = field(default_factory=threading.Event)
     answer: str | None = None              # the selected optionId, or None for cancelled or unusable
     result: Any = None                     # the result of a fs/* or terminal/* call
+    has_result: bool = False               # whether the answer had a "result" member (null counts)
     error: dict | None = None              # the error of a fs/* or terminal/* call
 
 
@@ -397,6 +398,8 @@ class StdioServer:
         if still_running:
             self._log(f"Warning: {len(still_running)} turn(s) did not stop within {SHUTDOWN_DEADLINE_S:g} s "
                       f"after the cancel; closing anyway ({', '.join(still_running)}).")
+        with self._lock:  # the connection is over: no late answer can come for the requests given up on
+            self._abandoned.clear()
 
     def _handle_line(self, line: str) -> None:
         if len(line) > MAX_LINE_CHARS:  # a reader that does not bound lines (tests, injected streams)
@@ -486,6 +489,7 @@ class StdioServer:
             answer = outcome["optionId"]
         pending.answer = answer
         pending.result = result
+        pending.has_result = "result" in message
         pending.error = message.get("error") if isinstance(message.get("error"), dict) else None
         pending.event.set()
 
@@ -901,6 +905,8 @@ class StdioServer:
             message = pending.error.get("message")
             raise ClientError(str(message) if message else "the editor reported an error",
                               code=code if isinstance(code, int) and not isinstance(code, bool) else None)
+        if not pending.has_result:  # neither a result nor an error object: not an answer, so not a success
+            raise ClientError(f"the editor sent a malformed answer to {method}")
         return pending.result
 
     # ----- writing ---------------------------------------------------------------------------------

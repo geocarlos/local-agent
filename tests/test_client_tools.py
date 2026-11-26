@@ -7,13 +7,14 @@ answer, or returns SILENT for no answer. Approvals stay on the core side and are
 """
 
 import json
+import time
 from pathlib import Path
 
 from fakes import text_reply, tool_reply
 from local_agent.client_tools import NOT_FOUND
 from local_agent.config import Settings
 from local_agent.frontends import server as server_module
-from test_server import Wire, assert_tool_calls_answered, cancel_now, new_session, updates
+from test_server import TIMEOUT, Wire, assert_tool_calls_answered, cancel_now, new_session, updates
 
 ALL_CAPS = {"fs": {"readTextFile": True, "writeTextFile": True}, "terminal": True}
 SILENT = object()
@@ -26,6 +27,13 @@ class Fail(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class Raw:
+    """An answer sent exactly as given (its members after jsonrpc and id): for a malformed answer."""
+
+    def __init__(self, **members) -> None:
+        self.members = members
 
 
 def init_with(w: Wire, caps) -> dict:
@@ -50,7 +58,9 @@ def run(w: Wire, session_id: str, text: str, editor, *, answer=None) -> list[dic
                 w.send(json.dumps({"jsonrpc": "2.0", "id": message["id"],
                                    "error": {"code": e.code, "message": e.message}}) + "\n")
                 continue
-            if result is not SILENT:
+            if isinstance(result, Raw):
+                w.send(json.dumps({"jsonrpc": "2.0", "id": message["id"], **result.members}) + "\n")
+            elif result is not SILENT:
                 w.send(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}) + "\n")
         elif message.get("id") == request_id and "method" not in message:
             return messages
@@ -437,4 +447,95 @@ def test_a_path_outside_the_workspace_that_is_allowed_is_read_through_the_editor
         w.close()
     finally:
         outside.unlink(missing_ok=True)
+
+
+# ----- answers that are not answers, errors that are not new files, and a client that goes away ------------
+
+
+def test_an_answer_with_neither_a_result_nor_an_error_is_an_error_not_a_success(workspace):
+    w = Wire(workspace, [tool_reply(("write_file", {"path": "out.txt", "content": "hello"})), text_reply("ok")])
+    init_with(w, ALL_CAPS)
+    session_id = new_session(w, workspace)
+    editor, calls = recorder({"fs/write_text_file": Raw(error="x")})  # an error that is not an object
+    run(w, session_id, "write", editor)
+
+    assert "fs/write_text_file" in methods(calls)
+    assert "the editor sent a malformed answer to fs/write_text_file" in tool_message(w)
+    assert tool_message(w).startswith("Error writing ")
+    assert "Successfully" not in tool_message(w)
+    w.close()
+
+
+def test_a_write_preview_says_so_when_the_editor_cannot_give_the_current_text(workspace):
+    w = Wire(workspace, [tool_reply(("write_file", {"path": "out.txt", "content": "hello"})), text_reply("ok")])
+    init_with(w, ALL_CAPS)
+    session_id = new_session(w, workspace)
+    asked: list[dict] = []
+
+    def answer(request: dict) -> str:
+        asked.append(request)
+        return "allow_once"
+
+    editor, _ = recorder({"fs/read_text_file": Fail(-32603, "the editor is busy")})
+    run(w, session_id, "write", editor, answer=answer)
+
+    preview = asked[0]["params"]["toolCall"]["_meta"]["preview"]
+    assert "Could not read the current text of" in preview["text"]
+    assert "the editor is busy" in preview["text"]
+    assert preview["text"].endswith("hello")  # the proposed content is still shown
+    w.close()
+
+
+def test_a_write_preview_for_a_new_file_is_the_proposed_content_without_a_note(workspace):
+    w = Wire(workspace, [tool_reply(("write_file", {"path": "new.txt", "content": "hello"})), text_reply("ok")])
+    init_with(w, ALL_CAPS)
+    session_id = new_session(w, workspace)
+    asked: list[dict] = []
+
+    def answer(request: dict) -> str:
+        asked.append(request)
+        return "allow_once"
+
+    editor, _ = recorder({"fs/read_text_file": Fail(NOT_FOUND, "no such file: new.txt")})
+    run(w, session_id, "write", editor, answer=answer)
+
+    preview = asked[0]["params"]["toolCall"]["_meta"]["preview"]
+    assert preview["kind"] == "text"
+    assert preview["text"] == "hello"  # no note: a new file's preview is the proposed content
+    w.close()
+
+
+def test_a_terminal_wait_that_errors_is_an_error_result_and_the_terminal_is_still_released(workspace):
+    w = Wire(workspace, [tool_reply(("run_command", {"command": "echo hi"})), text_reply("ok")])
+    init_with(w, ALL_CAPS)
+    session_id = new_session(w, workspace)
+    editor, calls = recorder({"terminal/create": {"terminalId": "t1"}, "terminal/wait_for_exit": Fail(-32603, "wait broke")})
+    run(w, session_id, "run", editor)
+
+    assert tool_message(w).startswith("Error running command in the editor: wait broke")
+    assert methods(calls) == ["terminal/create", "terminal/wait_for_exit", "terminal/release"]
+    assert_tool_calls_answered(w.server._sessions[session_id].messages)
+    w.close()
+
+
+def test_eof_while_the_editor_is_asked_ends_the_turn_promptly_and_forgets_the_request(workspace):
+    w = Wire(workspace, [tool_reply(("read_file", {"path": "a.txt"})), text_reply("never")])
+    init_with(w, ALL_CAPS)
+    session_id = new_session(w, workspace)
+    prompt_id = w.request("session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": "read"}]})
+    while True:  # the client gets the read request and never answers it
+        message = w.read()
+        if message.get("method") == "fs/read_text_file":
+            break
+
+    started = time.monotonic()
+    w.inbox.close()  # EOF: the client has gone away
+    w.thread.join(TIMEOUT)
+    elapsed = time.monotonic() - started
+    assert not w.thread.is_alive(), "the server did not shut down after EOF"
+    assert elapsed < 2, f"the turn ended after {elapsed:.1f} s, not promptly"
+    written = [json.loads(line) for line in w.outbox.writes]
+    response = next(m for m in written if m.get("id") == prompt_id and "method" not in m)
+    assert response["result"]["stopReason"] == "cancelled"
+    assert not w.server._abandoned  # the connection is over: nothing is remembered as given up on
 

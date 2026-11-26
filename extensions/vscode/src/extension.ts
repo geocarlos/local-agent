@@ -80,6 +80,7 @@ function openChat(context: vscode.ExtensionContext, output: vscode.OutputChannel
       onExit: (reason) => {
         post.send({ type: "closed", reason });
         output.appendLine(reason);
+        tools.releaseAll(); // the agent's commands end with it (their terminals stay, with their output)
       },
     });
     agent = relay;
@@ -141,6 +142,7 @@ function stopAgent(): void {
   agent?.detach();
   agent?.stop();
   agent = undefined;
+  editorTools?.releaseAll(); // the commands the stopped agent started are ended too
 }
 
 function pageHtml(context: vscode.ExtensionContext, webview: vscode.Webview, bundle: vscode.Uri): string {

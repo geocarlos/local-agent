@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from local_agent import sandbox
-from local_agent.client_tools import ClientError, ClientTools
+from local_agent.client_tools import NOT_FOUND, ClientError, ClientTools
 from local_agent.core.events import Preview
 from local_agent.permissions import Risk
 from local_agent.tools.edit_tools import (
@@ -54,13 +54,16 @@ def _write_title(path: str, content: str) -> str:
 
 def _current_for_preview(path: str, context: ToolContext) -> str | None:
     """The file's text for the preview: the editor's when the client can read, else the disk's. None for a new
-    file or a file that is not UTF-8 text (the preview then shows the proposed content)."""
+    file (the editor says NOT_FOUND) or a file that is not UTF-8 text (the preview then shows the proposed content).
+    Any other client error is raised: the editor could not give the text, which is not the same as a new file."""
     client = client_for(context, "read")
     if client is not None:
         try:
             return client.read_text_file(path)
-        except ClientError:
-            return None  # a new file in the editor's view, or one it cannot read: show the new content
+        except ClientError as e:
+            if e.code == NOT_FOUND:
+                return None
+            raise
     if Path(path).is_file():
         try:
             return read_text_file(path)
@@ -71,7 +74,11 @@ def _current_for_preview(path: str, context: ToolContext) -> str | None:
 
 def _write_preview(path: str, content: str, context: ToolContext) -> Preview:
     """A diff when the file exists and is UTF-8 text; otherwise the proposed content (a new file)."""
-    before = _current_for_preview(path, context)
+    try:
+        before = _current_for_preview(path, context)
+    except ClientError as e:  # the editor could not give the current text: say so, do not show a new file
+        note = f"Could not read the current text of '{path}' from the editor ({e}), so no diff is shown.\n\n"
+        return Preview(text=note + cap_preview(content), path=path, kind="text")
     if before is None:
         return Preview(text=cap_preview(content), path=path, kind="text")
     if client_for(context, "read") is not None:
