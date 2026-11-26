@@ -20,8 +20,8 @@ from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from fakes import FakeOllama
-from local_agent.config import Settings
-from local_agent.frontends import gui, web
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.frontends import gui, web
 
 
 def _settings(tmp_path):
@@ -115,7 +115,7 @@ def test_the_token_is_not_printed(tmp_path):
 
     assert code == 0
     assert seen["token"] not in errors
-    assert "Opening the local-agent window on http://127.0.0.1:" in errors
+    assert "Opening the wildcat-code-agent window on http://127.0.0.1:" in errors
 
 
 def test_ctrl_c_in_the_window_closes_it_cleanly(tmp_path):
@@ -225,7 +225,7 @@ def test_show_window_passes_the_url_and_the_window_size(monkeypatch):
     gui.show_window("http://127.0.0.1:9/#token=x")
 
     title, url, kwargs = calls["window"]
-    assert (title, url) == ("local-agent", "http://127.0.0.1:9/#token=x")
+    assert (title, url) == ("Wildcat Code Agent", "http://127.0.0.1:9/#token=x")
     assert kwargs["width"] == gui.WINDOW_SIZE[0] and kwargs["height"] == gui.WINDOW_SIZE[1]
     assert calls["start"]["gui"] == ("edgechromium" if sys.platform == "win32" else None)
 
@@ -268,7 +268,7 @@ def test_gui_log_appends_per_start_and_moves_a_big_one_aside(tmp_path, monkeypat
                 stream.close()
     text = log.read_text(encoding="utf-8")
     assert text.startswith("earlier run\n")
-    assert "--- local-agent gui started " in text and "this run" in text
+    assert "--- wildcat-code-agent gui started " in text and "this run" in text
     assert not (tmp_path / (gui.GUI_LOG_NAME + ".1")).exists()
 
     streams = _open_log_streams(tmp_path, monkeypatch, limit=10)  # now over the limit: moved aside
@@ -289,8 +289,8 @@ def test_ensure_streams_does_nothing_with_a_console(tmp_path, monkeypatch):
 def test_the_spec_builds_the_windowed_exe_beside_the_console_exe():
     from pathlib import Path
 
-    spec = (Path(__file__).resolve().parent.parent / "packaging" / "local-agent.spec").read_text(encoding="utf-8")
-    assert 'name="local-agent-gui"' in spec and "console=False" in spec
-    assert 'name="local-agent",' in spec and "console=True" in spec
+    spec = (Path(__file__).resolve().parent.parent / "packaging" / "wildcat-code-agent.spec").read_text(encoding="utf-8")
+    assert 'name="wildcat-code-agent-gui"' in spec and "console=False" in spec
+    assert 'name="wildcat-code-agent",' in spec and "console=True" in spec
     assert "gui_launcher.py" in spec and "MERGE(" in spec
     assert "COLLECT(" in spec and "window_exe" in spec  # one folder holds both exes

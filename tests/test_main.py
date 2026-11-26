@@ -1,9 +1,9 @@
-"""The `local-agent` subcommands (T11): chat (the default), serve --stdio, serve --web and gui (T18)."""
+"""The `wildcat-code-agent` subcommands (T11): chat (the default), serve --stdio, serve --web and gui (T18)."""
 
 import pytest
 
-from local_agent import main
-from local_agent.frontends import cli, server
+from wildcat_code_agent import main
+from wildcat_code_agent.frontends import cli, server
 
 
 def _empty_config(tmp_path):
@@ -13,7 +13,7 @@ def _empty_config(tmp_path):
 
 
 def test_gui_opens_the_window_with_the_shared_flags(monkeypatch, tmp_path):
-    from local_agent.frontends import gui
+    from wildcat_code_agent.frontends import gui
 
     monkeypatch.chdir(tmp_path)
     folder = tmp_path / "work"
@@ -41,7 +41,7 @@ def test_gui_opens_the_window_with_the_shared_flags(monkeypatch, tmp_path):
 
 
 def test_gui_exit_code_comes_from_the_window_command(monkeypatch, tmp_path):
-    from local_agent.frontends import gui
+    from wildcat_code_agent.frontends import gui
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gui, "run", lambda settings, **kwargs: 1)
@@ -121,7 +121,7 @@ def test_help_lists_the_subcommands_and_says_to_put_one_first(capsys):
         main(["--help"])
     assert exit_info.value.code == 0
     out = capsys.readouterr().out
-    for expected in ("chat", "serve --stdio", "gui", "put the subcommand first", "local-agent serve --stdio --cwd"):
+    for expected in ("chat", "serve --stdio", "gui", "put the subcommand first", "wildcat-code-agent serve --stdio --cwd"):
         assert expected in out
     with pytest.raises(SystemExit):
         main(["chat", "--help"])
@@ -138,7 +138,7 @@ def test_an_unknown_flag_without_a_subcommand_is_still_an_ordinary_error(capsys)
 
 
 def test_serve_web_takes_the_flags_and_the_port(monkeypatch, tmp_path):
-    from local_agent.frontends import web
+    from wildcat_code_agent.frontends import web
 
     monkeypatch.chdir(tmp_path)
     seen = {}
@@ -148,7 +148,7 @@ def test_serve_web_takes_the_flags_and_the_port(monkeypatch, tmp_path):
 
 
 def test_serve_web_without_a_port_takes_a_free_one(monkeypatch, tmp_path):
-    from local_agent.frontends import web
+    from wildcat_code_agent.frontends import web
 
     monkeypatch.chdir(tmp_path)
     seen = {}

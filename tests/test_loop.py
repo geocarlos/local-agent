@@ -2,16 +2,16 @@
 
 from fakes import text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import (
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import (
     DEFAULT_MAX_OUTPUT_CHARS,
     DEFAULT_MAX_TOOL_ROUNDS,
     DEFAULT_MODEL,
     DEFAULT_NUM_CTX,
     Settings,
 )
-from local_agent.core import loop
-from local_agent.core.events import (
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import (
     TextDelta,
     ThinkingDelta,
     ToolCall,
@@ -19,9 +19,9 @@ from local_agent.core.events import (
     TurnDone,
     Usage,
 )
-from local_agent.permissions import Risk
-from local_agent.tools import tool
-from local_agent.tools.output import truncate
+from wildcat_code_agent.permissions import Risk
+from wildcat_code_agent.tools import tool
+from wildcat_code_agent.tools.output import truncate
 
 
 def start(user_text: str) -> list:

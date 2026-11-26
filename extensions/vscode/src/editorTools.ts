@@ -160,7 +160,7 @@ export class EditorTools {
     }
     // One agent terminal at a time: the previous command's terminal is no longer used by the agent, so it is closed.
     this.closeReleased();
-    const terminal = vscode.window.createTerminal({ name: "local-agent", pty });
+    const terminal = vscode.window.createTerminal({ name: "wildcat-code-agent", pty });
     entry.terminal = terminal;
     terminal.show(true); // shown, without taking the focus from the chat
     this.terminals.set(id, entry);

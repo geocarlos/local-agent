@@ -8,7 +8,7 @@ import importlib
 import json
 import os
 
-from local_agent.plugin import Risk, tool
+from wildcat_code_agent.plugin import Risk, tool
 
 MODULES = [
     "sqlite3",

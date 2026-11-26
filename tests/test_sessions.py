@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from local_agent import atomic, sessions
-from local_agent.sessions import SessionError, SessionStore
+from wildcat_code_agent import atomic, sessions
+from wildcat_code_agent.sessions import SessionError, SessionStore
 
 SID = "sess-" + "a" * 32
 OTHER = "sess-" + "b" * 32
@@ -183,9 +183,10 @@ def test_the_folder_is_the_data_folder_override_when_set(tmp_path, monkeypatch):
 
 def test_without_the_override_the_folder_is_the_per_user_data_folder(monkeypatch):
     monkeypatch.delenv(sessions.ENV_DATA_DIR, raising=False)
+    monkeypatch.setattr(sessions, "LEGACY_APP_NAME", "wildcat-code-agent-test-no-such-legacy-folder")
     folder = sessions.sessions_folder()
     assert folder.name == "sessions"
-    assert folder.parent.name == "local-agent"
+    assert folder.parent.name == "wildcat-code-agent"
 
 
 def test_a_write_waits_while_another_handle_holds_the_target_open(tmp_path):

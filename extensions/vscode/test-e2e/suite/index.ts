@@ -6,8 +6,8 @@ import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { runEditorTools } from "./editorTools";
 
-const EXTENSION_ID = "local-agent.local-agent-vscode";
-const PANEL_TITLE = "local-agent";
+const EXTENSION_ID = "wildcat-code-agent.wildcat-code-agent-vscode";
+const PANEL_TITLE = "wildcat-code-agent";
 
 function panelTabs(): vscode.Tab[] {
   return vscode.window.tabGroups.all
@@ -32,20 +32,20 @@ export async function run(): Promise<void> {
   await extension.activate();
 
   const commands = await vscode.commands.getCommands(true);
-  assert.ok(commands.includes("localAgent.openChat"), "the openChat command is registered");
+  assert.ok(commands.includes("wildcatCodeAgent.openChat"), "the openChat command is registered");
 
-  await vscode.commands.executeCommand("localAgent.openChat");
+  await vscode.commands.executeCommand("wildcatCodeAgent.openChat");
   await waitFor(() => panelTabs().length === 1, "the chat panel to open");
 
   // A second call reveals the same panel instead of opening another one.
-  await vscode.commands.executeCommand("localAgent.openChat");
+  await vscode.commands.executeCommand("wildcatCodeAgent.openChat");
   await new Promise((resolve) => setTimeout(resolve, 500));
   assert.equal(panelTabs().length, 1, "one chat panel");
 
   // Closing the panel disposes it; the next call opens a new one.
   await vscode.window.tabGroups.close(panelTabs()[0]);
   await waitFor(() => panelTabs().length === 0, "the chat panel to close");
-  await vscode.commands.executeCommand("localAgent.openChat");
+  await vscode.commands.executeCommand("wildcatCodeAgent.openChat");
   await waitFor(() => panelTabs().length === 1, "the chat panel to open again");
   await vscode.window.tabGroups.close(panelTabs()[0]);
   await waitFor(() => panelTabs().length === 0, "the second chat panel to close");

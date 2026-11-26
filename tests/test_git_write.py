@@ -12,13 +12,13 @@ from pathlib import Path
 import pytest
 from fakes import FakeOllama, text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import Settings
-from local_agent.core import loop
-from local_agent.core.events import ApprovalRequest, Decision, ToolResult
-from local_agent.permissions import SessionApprovals
-from local_agent.tools import git_write, read_tools
-from local_agent.tools.registry import ToolContext
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import ApprovalRequest, Decision, ToolResult
+from wildcat_code_agent.permissions import SessionApprovals
+from wildcat_code_agent.tools import git_write, read_tools
+from wildcat_code_agent.tools.registry import ToolContext
 
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 

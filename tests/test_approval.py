@@ -4,9 +4,9 @@ import sys
 
 from fakes import text_reply, tool_reply
 
-from local_agent.core import loop
-from local_agent.core.events import ApprovalRequest, Decision, ToolCall, ToolResult
-from local_agent.tools import process
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import ApprovalRequest, Decision, ToolCall, ToolResult
+from wildcat_code_agent.tools import process
 
 
 class RecordingApprover:

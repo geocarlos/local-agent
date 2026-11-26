@@ -9,7 +9,7 @@ import { runTests } from "@vscode/test-electron";
 async function main(): Promise<void> {
   const extensionDevelopmentPath = path.resolve(__dirname, "..", "..");
   const extensionTestsPath = path.resolve(__dirname, "suite", "index");
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "local-agent-e2e-"));
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "wildcat-code-agent-e2e-"));
   fs.writeFileSync(path.join(workspace, "hello.txt"), "Hello world\n", "utf8");
   await runTests({
     extensionDevelopmentPath,

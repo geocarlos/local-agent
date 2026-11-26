@@ -1,4 +1,4 @@
-"""A fake Ollama HTTP server with a scripted model, for tests that run `local-agent serve --web` as a process.
+"""A fake Ollama HTTP server with a scripted model, for tests that run `wildcat-code-agent serve --web` as a process.
 
 It answers the two routes the agent uses: `POST /api/show` (the capability probe at start-up) and `POST /api/chat`
 (streamed, one JSON object per line, as Ollama does). The script depends on the last message:

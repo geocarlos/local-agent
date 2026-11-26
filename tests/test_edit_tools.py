@@ -8,12 +8,12 @@ import os
 
 from fakes import text_reply, tool_reply
 
-from local_agent import tools
-from local_agent.config import Settings
-from local_agent.core import loop
-from local_agent.core.events import ApprovalRequest, Decision, ToolResult
-from local_agent.tools.edit_tools import MAX_PREVIEW_CHARS, unified_diff
-from local_agent.tools.registry import ToolContext
+from wildcat_code_agent import tools
+from wildcat_code_agent.config import Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import ApprovalRequest, Decision, ToolResult
+from wildcat_code_agent.tools.edit_tools import MAX_PREVIEW_CHARS, unified_diff
+from wildcat_code_agent.tools.registry import ToolContext
 
 
 class Recording:

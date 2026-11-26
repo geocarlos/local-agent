@@ -8,8 +8,8 @@ import ollama
 import pytest
 from fakes import FakeOllama, Raise, Stream, text_reply, tool_reply
 
-from local_agent.config import DEFAULT_MODEL, Settings
-from local_agent.core.events import (
+from wildcat_code_agent.config import DEFAULT_MODEL, Settings
+from wildcat_code_agent.core.events import (
     ApprovalRequest,
     Decision,
     Preview,
@@ -19,7 +19,7 @@ from local_agent.core.events import (
     TurnDone,
     Usage,
 )
-from local_agent.frontends import cli
+from wildcat_code_agent.frontends import cli
 
 
 def request_for(title="Write 2 chars to 'a.txt'") -> ApprovalRequest:
@@ -89,7 +89,7 @@ def test_repl_write_with_y_then_exit(fake_ollama, monkeypatch, workspace, capsys
     cli.run(client=client)
 
     out = capsys.readouterr().out
-    assert f"Local Agent ready ({DEFAULT_MODEL})" in out
+    assert f"Wildcat Code Agent ready ({DEFAULT_MODEL})" in out
     assert "[Tool Call] write_file(" in out
     assert f"[PROPOSED CONTENT for '{target}']\nhi\n[END PROPOSED CONTENT]" in out
     assert "Agent: saved it" in out
@@ -122,7 +122,7 @@ def test_cli_repl_runs_a_turn_and_exits(fake_ollama, monkeypatch, capsys):
     cli.run(client=client)
 
     out = capsys.readouterr().out
-    assert f"Local Agent ready ({DEFAULT_MODEL})" in out
+    assert f"Wildcat Code Agent ready ({DEFAULT_MODEL})" in out
     assert "Agent: hi there" in out
     assert client.calls[0]["messages"][-1] == {"role": "user", "content": "hello"}
 
@@ -187,7 +187,7 @@ def test_ctrl_c_at_the_prompt_exits_cleanly(fake_ollama, monkeypatch, capsys):
 
     cli.run(client=fake_ollama([]))  # no KeyboardInterrupt escapes
 
-    assert f"Local Agent ready ({DEFAULT_MODEL})" in capsys.readouterr().out
+    assert f"Wildcat Code Agent ready ({DEFAULT_MODEL})" in capsys.readouterr().out
 
 
 def test_ollama_down_shows_an_error_and_stays_at_the_prompt(monkeypatch, capsys):
@@ -410,17 +410,17 @@ def test_eof_at_the_prompt_exits_cleanly(fake_ollama, monkeypatch, capsys):
 
     cli.run(client=fake_ollama([]))  # no EOFError escapes
 
-    assert f"Local Agent ready ({DEFAULT_MODEL})" in capsys.readouterr().out
+    assert f"Wildcat Code Agent ready ({DEFAULT_MODEL})" in capsys.readouterr().out
 
 
 def test_piped_empty_stdin_exits_zero_without_a_traceback(tmp_path):
     """The source build, as the exe does: stdin ends at once, so the REPL ends with exit 0."""
-    code = ("from local_agent.config import Settings\n"
-            "from local_agent.frontends import cli\n"
+    code = ("from wildcat_code_agent.config import Settings\n"
+            "from wildcat_code_agent.frontends import cli\n"
             "cli.run(settings=Settings(plugins_enabled=False, host='http://127.0.0.1:1'))\n")
     result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, input="", capture_output=True,
                             text=True, encoding="utf-8", timeout=120)
 
     assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr
-    assert "Local Agent ready" in result.stdout
+    assert "Wildcat Code Agent ready" in result.stdout

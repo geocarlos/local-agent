@@ -12,9 +12,9 @@ import pytest
 from installer_path import add_dir, normalize, path_has_dir, remove_dir
 
 ROOT = Path(__file__).resolve().parent.parent
-ISS = ROOT / "packaging" / "local-agent.iss"
+ISS = ROOT / "packaging" / "wildcat-code-agent.iss"
 BUILD_INSTALLER = ROOT / "packaging" / "build-installer.ps1"
-DIR = r"C:\Program Files\local-agent"
+DIR = r"C:\Program Files\wildcat-code-agent"
 
 
 # --- PATH add -------------------------------------------------------------------------------
@@ -63,7 +63,7 @@ def test_add_skips_entry_in_the_middle():
 
 
 def test_add_does_not_treat_a_longer_path_as_a_match():
-    value = r"C:\Program Files\local-agent-tools"
+    value = r"C:\Program Files\wildcat-code-agent-tools"
     assert add_dir(value, DIR) == rf"{value};{DIR}"
 
 
@@ -159,7 +159,7 @@ def iss_text():
         "ArchitecturesAllowed=x64compatible",
         "ArchitecturesInstallIn64BitMode=x64compatible",
         "DefaultDirName={autopf}\\{#AppName}",
-        "Source: \"..\\dist\\local-agent\\*\"",
+        "Source: \"..\\dist\\wildcat-code-agent\\*\"",
         "OutputBaseFilename={#AppName}-{#AppVersion}-setup",
     ],
 )
@@ -196,13 +196,13 @@ def test_iss_has_the_path_functions(iss_text):
 
 
 def test_iss_adds_a_start_menu_shortcut_to_the_window_only(iss_text):
-    # T18: the window (local-agent-gui.exe, no console) in the all-users Start menu; the console exe gets none.
+    # T18: the window (wildcat-code-agent-gui.exe, no console) in the all-users Start menu; the console exe gets none.
     section = iss_text.split("[Icons]", 1)[1].split("[Code]", 1)[0]
     entries = [line for line in section.splitlines() if line.startswith("Name:")]
     assert len(entries) == 1
     assert "{autoprograms}" in entries[0]
-    assert r'Filename: "{app}\local-agent-gui.exe"' in entries[0]
-    assert "local-agent.exe" not in section
+    assert r'Filename: "{app}\wildcat-code-agent-gui.exe"' in entries[0]
+    assert "wildcat-code-agent.exe" not in section
     assert "WorkingDir:" not in entries[0]  # the app picks the folder; a WorkingDir would be fixed at install time
 
 
@@ -219,7 +219,7 @@ def test_build_installer_script_exists_and_names_iscc():
     assert "Inno Setup 6" in text
     assert "JRSoftware.InnoSetup" in text
     assert "/DAppVersion=" in text
-    assert "dist\\installer\\local-agent-$Version-setup.exe" in text
+    assert "dist\\installer\\wildcat-code-agent-$Version-setup.exe" in text
 
 
 def test_build_installer_warns_when_reused_exe_is_older_than_src():

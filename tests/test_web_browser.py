@@ -64,7 +64,7 @@ def served(tmp_path):
     config.write_text("", encoding="utf-8")  # the user's own config is never read
     fake, fake_url = start_fake_ollama()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "local_agent", "serve", "--web", "--port", "0", "--no-plugins",
+        [sys.executable, "-m", "wildcat_code_agent", "serve", "--web", "--port", "0", "--no-plugins",
          "--host", fake_url, "--config", str(config), "--cwd", str(workspace)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
@@ -87,7 +87,7 @@ def served(tmp_path):
         if not seen.wait(60):
             raise AssertionError("the server did not print its page URL: " + "\n".join(lines))
         yield {"url": found["url"], "workspace": workspace, "proc": proc, "config": config,
-               "sessions": Path(os.environ["LOCAL_AGENT_DATA_DIR"]) / "sessions"}
+               "sessions": Path(os.environ["WILDCAT_CODE_AGENT_DATA_DIR"]) / "sessions"}
     finally:
         proc.kill()  # our own process, by its handle
         proc.wait(timeout=30)

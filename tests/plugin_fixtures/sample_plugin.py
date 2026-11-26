@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from local_agent.plugin import Risk, tool
+from wildcat_code_agent.plugin import Risk, tool
 
 
 @tool(risk=Risk.READ)

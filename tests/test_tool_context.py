@@ -5,9 +5,9 @@ from typing import Annotated
 
 import pytest
 
-from local_agent.permissions import Risk
-from local_agent.tools import TOOLS, builtin, tool
-from local_agent.tools.registry import ToolContext
+from wildcat_code_agent.permissions import Risk
+from wildcat_code_agent.tools import TOOLS, builtin, tool
+from wildcat_code_agent.tools.registry import ToolContext
 
 
 def make_tool(fn, risk=Risk.READ):

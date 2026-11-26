@@ -9,9 +9,9 @@ import { EditorTools } from "../../src/editorTools";
 
 const SESSION = "e2e-session";
 
-// The terminals the host opened for the agent's commands (named "local-agent", see editorTools.ts).
+// The terminals the host opened for the agent's commands (named "wildcat-code-agent", see editorTools.ts).
 function agentTerminals(): vscode.Terminal[] {
-  return vscode.window.terminals.filter((terminal) => terminal.name === "local-agent");
+  return vscode.window.terminals.filter((terminal) => terminal.name === "wildcat-code-agent");
 }
 
 async function waitFor(check: () => boolean, what: string, timeoutMs = 10_000): Promise<void> {

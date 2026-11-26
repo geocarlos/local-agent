@@ -14,13 +14,13 @@ from pathlib import Path
 import pytest
 from fakes import FakeOllama, text_reply, tool_reply
 
-from local_agent.config import McpServer, Settings
-from local_agent.core import loop
-from local_agent.core.events import Decision, TurnDone
-from local_agent.permissions import Risk
-from local_agent.tools import profiles
-from local_agent.tools.mcp_tools import start_mcp_servers
-from local_agent.tools.registry import REGISTRY, ToolContext
+from wildcat_code_agent.config import McpServer, Settings
+from wildcat_code_agent.core import loop
+from wildcat_code_agent.core.events import Decision, TurnDone
+from wildcat_code_agent.permissions import Risk
+from wildcat_code_agent.tools import profiles
+from wildcat_code_agent.tools.mcp_tools import start_mcp_servers
+from wildcat_code_agent.tools.registry import REGISTRY, ToolContext
 from test_streaming import assert_tool_calls_answered
 
 SERVERS_DIR = Path(__file__).parent / "mcp_servers"
@@ -241,17 +241,17 @@ def test_a_server_that_does_not_answer_in_time_is_stopped_and_skipped():
 
 
 def test_a_server_sees_only_the_safe_environment_and_the_variables_set_in_its_env(monkeypatch):
-    monkeypatch.setenv("LOCAL_AGENT_TEST_SECRET", "hunter2")
-    monkeypatch.setenv("LOCAL_AGENT_TEST_PYTHONPATH", "/somewhere")
-    servers = {"envsrv": echo_server(name="envsrv", env={"LOCAL_AGENT_TEST_SET": "yes"})}
+    monkeypatch.setenv("WILDCAT_CODE_AGENT_TEST_SECRET", "hunter2")
+    monkeypatch.setenv("WILDCAT_CODE_AGENT_TEST_PYTHONPATH", "/somewhere")
+    servers = {"envsrv": echo_server(name="envsrv", env={"WILDCAT_CODE_AGENT_TEST_SET": "yes"})}
     started = start_mcp_servers(servers, timeout_s=START_TIMEOUT_S)
     try:
         def seen(variable: str) -> str:
             return REGISTRY["envsrv__getenv"].call({"name": variable}, ToolContext())
 
-        assert seen("LOCAL_AGENT_TEST_SECRET") == "(unset)"   # in the agent's environment, not in env
-        assert seen("LOCAL_AGENT_TEST_PYTHONPATH") == "(unset)"
-        assert seen("LOCAL_AGENT_TEST_SET") == "yes"          # set in env
+        assert seen("WILDCAT_CODE_AGENT_TEST_SECRET") == "(unset)"   # in the agent's environment, not in env
+        assert seen("WILDCAT_CODE_AGENT_TEST_PYTHONPATH") == "(unset)"
+        assert seen("WILDCAT_CODE_AGENT_TEST_SET") == "yes"          # set in env
         assert seen("PATH") == os.environ["PATH"]             # part of the safe subset
     finally:
         started.close()

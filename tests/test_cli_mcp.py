@@ -3,10 +3,10 @@
 import sys
 from pathlib import Path
 
-from local_agent.config import McpServer, Settings
-from local_agent.core.events import ApprovalRequest, Preview
-from local_agent.frontends import cli
-from local_agent.tools.registry import REGISTRY
+from wildcat_code_agent.config import McpServer, Settings
+from wildcat_code_agent.core.events import ApprovalRequest, Preview
+from wildcat_code_agent.frontends import cli
+from wildcat_code_agent.tools.registry import REGISTRY
 
 ECHO = str(Path(__file__).parent / "mcp_servers" / "echo_server.py")
 
@@ -24,7 +24,7 @@ def test_a_text_preview_without_a_path_is_shown_as_a_block(capsys):
 def test_a_hostile_tool_name_and_arguments_cannot_write_controls_into_the_approval_prompt(monkeypatch, capsys):
     from mcp.types import Tool as McpTool
 
-    from local_agent.tools.mcp_tools import McpRuntime, _register_server
+    from wildcat_code_agent.tools.mcp_tools import McpRuntime, _register_server
 
     registry = {}
     tool = McpTool(name="evil\nname\x1b[2J\r", inputSchema={"type": "object", "properties": {}})
@@ -54,7 +54,7 @@ def test_repl_shows_start_up_warnings_and_stops_the_servers_at_exit(monkeypatch,
     cli.run(settings=Settings(mcp_servers=servers, command_timeout_s=20), client=_NoModel())
     out = capsys.readouterr().out
     assert "Warning: MCP server 'cliboom' did not start" in out and "kaboom" in out
-    assert out.index("Warning") < out.index("Local Agent ready")
+    assert out.index("Warning") < out.index("Wildcat Code Agent ready")
     assert not any(name.startswith("cliecho__") for name in REGISTRY)  # removed when the REPL exits
 
 

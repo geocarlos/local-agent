@@ -101,7 +101,7 @@ def test_frozen_exe_tests_and_smoke_run_after_the_build(wf):
     text = _run_text(wf["jobs"]["build"])
     build = text.index(r".\packaging\build.ps1")
     assert build < text.index("tests/test_frozen_exe.py") < text.index(r".\packaging\smoke-exe.ps1")
-    assert "LOCAL_AGENT_EXE" in text
+    assert "WILDCAT_CODE_AGENT_EXE" in text
 
 
 def test_tag_must_equal_the_pyproject_version(wf):
@@ -115,8 +115,8 @@ def test_tag_must_equal_the_pyproject_version(wf):
 def test_installer_and_zip_are_built_and_checksummed(wf):
     text = _run_text(wf["jobs"]["build"])
     assert r".\packaging\build-installer.ps1" in text
-    assert "local-agent-$Version-win-x64.zip" in text
-    assert "local-agent-$Version-setup.exe" in text
+    assert "wildcat-code-agent-$Version-win-x64.zip" in text
+    assert "wildcat-code-agent-$Version-setup.exe" in text
     assert "SHA256SUMS.txt" in text
 
 
@@ -130,7 +130,7 @@ def test_artifacts_are_uploaded_on_every_run(wf):
     uploads = [step for step in _steps(wf["jobs"]["build"])
                if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert len(uploads) == 1
-    assert uploads[0]["with"]["name"] == "local-agent-release-${{ steps.version.outputs.version }}"
+    assert uploads[0]["with"]["name"] == "wildcat-code-agent-release-${{ steps.version.outputs.version }}"
     assert uploads[0]["with"]["path"] == "dist/release/"
     assert "if" not in uploads[0]  # runs whenever the build succeeded, tag or not
 
@@ -146,7 +146,7 @@ def test_release_attaches_the_release_files_and_marks_prereleases(wf):
     assert "--prerelease" in run
     assert "*-*" in run
     downloads = [step for step in _steps(publish) if step.get("uses", "").startswith("actions/download-artifact@")]
-    assert downloads and downloads[0]["with"]["name"] == "local-agent-release-${{ needs.build.outputs.version }}"
+    assert downloads and downloads[0]["with"]["name"] == "wildcat-code-agent-release-${{ needs.build.outputs.version }}"
 
 
 # --- safety ------------------------------------------------------------------------------------
@@ -181,7 +181,7 @@ def test_smoke_script_checks_the_window_backend_and_the_windowed_exe():
     following = text[text.index(required_line):text.index(required_line) + 300]
     for module in ("webview", "clr", "webview.platforms.winforms"):  # T18: pywebview's Windows backend loads
         assert f'"{module}"' in following
-    assert "local-agent-gui.exe" in text
+    assert "wildcat-code-agent-gui.exe" in text
     assert "$ConsoleSubsystem -ne 3" in text and "$GuiSubsystem -ne 2" in text  # console vs windowed exe
 
 
