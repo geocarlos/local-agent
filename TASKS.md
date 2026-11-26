@@ -127,7 +127,7 @@ Marks: ✅ done · ☑️ partially done (a milestone with some of its tasks don
 - Tools that run in the extension: read unsaved buffers, apply edits as a `WorkspaceEdit` with diff preview (undo works), run commands in an integrated terminal.
 - **Done when:** an edit is approved as a diff and undone with Ctrl+Z.
 
-### T21 Editor context: `in review`
+### ✅ T21 Editor context: `done`
 - "Add selection to chat", `@file` mentions, open files and diagnostics as context.
 - **Done when:** asking about the open file uses its content without the model calling `read_file`.
 
